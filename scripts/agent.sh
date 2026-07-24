@@ -204,6 +204,43 @@ wait)
   [ "$json" = yes ] && echo '{"ok":false,"timeout":true}' || echo 'timeout' >&2
   exit 1
   ;;
+kill)
+  json=no
+  [ "${1:-}" = --json ] && json=yes
+  s="$(resolve_sessions "$target" | head -1)" || exit $?
+  wt="$(tm show-option -t "$s" -qv @claude_worktree)"
+  pane="$(pane_of "$s")"
+  pid="$(tm display-message -p -t "$pane" '#{pane_pid}')"
+
+  # TERM, then wait for real death before touching the worktree — a dying
+  # Claude can still flush writes that would corrupt the clean-check.
+  command kill -- "$pid" 2>/dev/null
+  for _ in $(seq 1 100); do
+    command kill -0 "$pid" 2>/dev/null || break
+    sleep 0.1
+  done
+  command kill -0 "$pid" 2>/dev/null && command kill -9 -- "$pid" 2>/dev/null
+
+  state=none
+  if [ -n "$wt" ] && [ -d "$wt" ]; then
+    if [ -z "$(git -C "$wt" status --porcelain 2>/dev/null)" ]; then
+      main="$(dirname "$(git -C "$wt" rev-parse --path-format=absolute --git-common-dir)")"
+      git -C "$main" worktree remove -- "$wt" 2>/dev/null && state=removed || state=preserved
+      rm -f "$(dirname "$wt")/.$(basename "$wt").signals"
+    else
+      state=preserved
+    fi
+  fi
+  tm kill-session -t "=$s" 2>/dev/null
+
+  msg="killed $s — worktree $state${wt:+: $wt}"
+  [ -n "${TMUX:-}" ] && tm display-message "$msg"
+  if [ "$json" = yes ]; then
+    jq -cn --arg st "$state" --arg p "${wt:-}" '{ok: true, worktree: $st, path: $p}'
+  else
+    echo "$msg"
+  fi
+  ;;
 *)
   die "unknown subcommand '$cmd'"
   ;;
