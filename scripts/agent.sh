@@ -34,6 +34,17 @@ resolve_sessions() {
     tm has-session -t "=$t" 2>/dev/null || die "no session $t"
     printf '%s\n' "$t"
     ;;
+  @all | @idle | @waiting | @busy)
+    local want="${t#@}" s2
+    while IFS= read -r s2; do
+      [ -z "$(tm show-option -t "$s2" -qv @claude_worktree)" ] && continue
+      if [ "$want" = all ] || [ "$(status_of "$s2")" = "$want" ]; then
+        printf '%s\n' "$s2"
+      fi
+    done <<EOF2
+$(tm list-sessions -F '#{session_name}' 2>/dev/null | grep "^$prefix")
+EOF2
+    ;;
   *)
     matches="$(tm list-sessions -F '#{session_name}' 2>/dev/null |
       grep -E "^${prefix}.+-${t}$")"
@@ -117,6 +128,7 @@ EOF
   fi
   ;;
 read)
+  case "$target" in @*) die "group target not supported for $cmd" ;; esac
   lines='' source=visible json=no
   while [ $# -gt 0 ]; do
     case "$1" in
@@ -139,6 +151,7 @@ read)
   fi
   ;;
 signal)
+  case "$target" in @*) die "group target not supported for $cmd" ;; esac
   type='' body='' json=no
   while [ $# -gt 0 ]; do
     case "$1" in
@@ -155,6 +168,7 @@ signal)
   [ "$json" = yes ] && printf '{"ok":true,"signaled":"%s"}\n' "$type" || echo "signaled $type"
   ;;
 wait)
+  case "$target" in @*) die "group target not supported for $cmd" ;; esac
   mode='' want='' timeout=300 use_regex=no json=no
   while [ $# -gt 0 ]; do
     case "$1" in
@@ -205,6 +219,7 @@ wait)
   exit 1
   ;;
 kill)
+  case "$target" in @*) die "group target not supported for $cmd" ;; esac
   json=no
   [ "${1:-}" = --json ] && json=yes
   s="$(resolve_sessions "$target" | head -1)" || exit $?
