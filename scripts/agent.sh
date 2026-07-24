@@ -209,6 +209,7 @@ kill)
   [ "${1:-}" = --json ] && json=yes
   s="$(resolve_sessions "$target" | head -1)" || exit $?
   wt="$(tm show-option -t "$s" -qv @claude_worktree)"
+  sigfile="$(signals_file "$s")"
   pane="$(pane_of "$s")"
   pid="$(tm display-message -p -t "$pane" '#{pane_pid}')"
 
@@ -226,7 +227,7 @@ kill)
     if [ -z "$(git -C "$wt" status --porcelain 2>/dev/null)" ]; then
       main="$(dirname "$(git -C "$wt" rev-parse --path-format=absolute --git-common-dir)")"
       git -C "$main" worktree remove -- "$wt" 2>/dev/null && state=removed || state=preserved
-      rm -f "$(dirname "$wt")/.$(basename "$wt").signals"
+      [ "$state" = removed ] && rm -f "$sigfile"
     else
       state=preserved
     fi

@@ -35,4 +35,17 @@ assert_ok test -f "$T_TMP/wtbase/alpha-h/.sig1.signals"
 assert_ok agent kill sig1
 assert_ok test ! -e "$T_TMP/wtbase/alpha-h/.sig1.signals"
 
+# signals preserved when worktree removal fails (locked worktree)
+mk_agent locked1
+agent signal locked1 "done" --body x >/dev/null
+wt_path="$T_TMP/wtbase/alpha-h/locked1"
+signals_path="$T_TMP/wtbase/alpha-h/.locked1.signals"
+assert_ok test -f "$signals_path"
+# Lock the worktree to force removal to fail
+assert_ok git -C "$repo" worktree lock "$wt_path"
+out="$(agent kill locked1 --json)"
+printf '%s' "$out" | jq -e '.worktree == "preserved"' >/dev/null || _fail locked-json
+assert_ok test -d "$wt_path"
+assert_ok test -f "$signals_path"
+
 t_teardown
