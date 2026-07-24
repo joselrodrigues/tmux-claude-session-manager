@@ -22,3 +22,11 @@ tmux bind-key "$launch_key" \
 # closes that popup first so the picker opens full-size on the outer client.
 tmux bind-key "$list_key" \
   run-shell "$CURRENT_DIR/scripts/list.sh '#{q:client_name}'"
+
+spawn_key="$(get_tmux_option @claude_spawn_key 'Y')"
+
+# Spawn a named agent in its own git worktree for the current pane's repo.
+# The popup collects the name with read -r; see spawn-prompt.sh.
+tmux bind-key "$spawn_key" \
+  display-popup -w 60% -h 25% \
+  -E "$CURRENT_DIR/scripts/spawn-prompt.sh '#{q:pane_current_path}' '#{q:window_id}'"
