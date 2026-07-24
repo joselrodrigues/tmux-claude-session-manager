@@ -48,6 +48,16 @@ resolve_sessions() {
 
 pane_of() { tm list-panes -t "=$1" -F '#{pane_id}' | head -1; }
 
+# pane_for_target <target> <session> — the exact pane to act on. A %-pane-id
+# target addresses that pane directly; any other target uses the session's
+# first pane (resolve_sessions already validated a %-target's pane exists).
+pane_for_target() {
+  case "$1" in
+  %*) printf '%s\n' "$1" ;;
+  *) pane_of "$2" ;;
+  esac
+}
+
 cmd="${1:-}"; shift 2>/dev/null || die 'usage: agent.sh <send|read> <target> ...'
 target="${1:-}"; shift 2>/dev/null || die 'missing target'
 
@@ -66,7 +76,7 @@ send)
   sessions="$(resolve_sessions "$target")" || exit $?
   sent=''
   while IFS= read -r s; do
-    pane="$(pane_of "$s")"
+    pane="$(pane_for_target "$target" "$s")"
     tm send-keys -t "$pane" -l -- "$text"
     [ "$enter" = yes ] && tm send-keys -t "$pane" Enter
     sent="${sent:+$sent }$s"
@@ -90,7 +100,7 @@ read)
     shift
   done
   s="$(resolve_sessions "$target" | head -1)" || exit $?
-  pane="$(pane_of "$s")"
+  pane="$(pane_for_target "$target" "$s")"
   cap=(tm capture-pane -p -t "$pane")
   [ "$source" = recent ] && cap+=(-S "-${lines:-1000}")
   out="$("${cap[@]}")"

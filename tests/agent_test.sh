@@ -29,6 +29,19 @@ case "$out" in *'$ echo NOT-RUN'*) : ;; *) _fail "--no-enter executed: $out" ;; 
 pane="$($TMUX_CMD list-panes -t claude-alpha-docs -F '#{pane_id}' | head -1)"
 assert_ok agent read "$pane"
 
+# pane-id target on a multi-pane session must hit that exact pane, not the
+# session's first pane
+$TMUX_CMD split-window -t claude-alpha-docs -d -c "$T_TMP" 'bash --norc'
+sleep 1
+first_pane="$($TMUX_CMD list-panes -t claude-alpha-docs -F '#{pane_id}' | sed -n 1p)"
+second_pane="$($TMUX_CMD list-panes -t claude-alpha-docs -F '#{pane_id}' | sed -n 2p)"
+assert_ok agent send "$second_pane" 'echo second-pane-only'
+sleep 1
+out="$(agent read "$second_pane")"
+case "$out" in *second-pane-only*) : ;; *) _fail "second pane missed sent text: $out" ;; esac
+out="$(agent read "$first_pane")"
+case "$out" in *second-pane-only*) _fail "text leaked into first pane: $out" ;; *) : ;; esac
+
 # unknown target
 assert_fail agent read nosuchagent
 
