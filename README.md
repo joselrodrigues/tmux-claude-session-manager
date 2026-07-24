@@ -164,6 +164,45 @@ so tmux stores a literal `$` (in a single-quoted value, use a bare
   first (closing it), then reopens the picker full-size on the outer host client —
   so you never end up with a cramped popup-in-popup.
 
+## Named agents & worktrees
+
+Named agents let a coordinator Claude (or any script) orchestrate the fleet
+without attaching. Launch with `prefix` + `y` from any directory, then send
+tasks and wait for completion via CLI.
+
+### Spawn and control
+
+| Command | Action |
+| ------- | ------ |
+| `spawn.sh <name> <repo> "<task>" [--no-popup]` | Launch a named agent for `<repo>` with the given task. Reuses worktree if name exists in that repo. |
+| `agent.sh send <name\|@target> '<message>'` | Send text to an agent or group target. |
+| `agent.sh read <name> [--lines N]` | Print agent's pane output. |
+| `agent.sh wait <name> --signal <done\|blocked> [--timeout SEC] [--json]` | Block until signal is sent, status matches, or timeout. |
+| `agent.sh signal <name> <done\|blocked> [--body "<summary>"]` | Send a completion signal. |
+| `agent.sh kill <name>` | Kill the agent (worktree preserved; branch stays). |
+
+### Group targets
+
+Send to multiple agents with `@all`, `@idle`, `@waiting`, or `@busy`:
+
+```bash
+agent.sh send @idle 'pick up the next task from TODO.md'
+```
+
+### Configuration
+
+Set before the plugin loads (defaults shown):
+
+```tmux
+set -g @claude_spawn_key       'y'                    # key: spawn named agent
+set -g @claude_worktree_dir    '~/.claude-worktrees'  # where to store worktrees
+```
+
+### Full workflow
+
+See [docs/orchestration.md](docs/orchestration.md) for a complete example,
+including how to handle all three terminal states (`done`, `blocked`, `waiting`).
+
 ## License
 
 [MIT](LICENSE) © Takuya Matsuyama
