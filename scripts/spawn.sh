@@ -70,6 +70,7 @@ args="$(get_tmux_option @claude_args '')"
 
 tm new-session -d -s "$session" -c "$wt_dir" "$cmd" || die "new-session failed"
 tm set-option -t "$session" @claude_worktree "$wt_dir"
+tm set-option -t "$session" @claude_agent_name "$name"
 [ -n "$task" ] && tm set-option -t "$session" @claude_task "$task"
 [ -n "$window" ] && tm set-option -t "$session" @claude_origin "$window"
 tm select-pane -t "$session:" -T "$name" 2>/dev/null
@@ -77,5 +78,10 @@ tm select-pane -t "$session:" -T "$name" 2>/dev/null
 if [ "$popup" = yes ]; then
   w="$(get_tmux_option @claude_popup_width '90%')"
   h="$(get_tmux_option @claude_popup_height '90%')"
+  # When spawn.sh runs inside the spawn-prompt popup, tmux "modifies" that
+  # already-open popup in place and ignores this -w/-h (the caller's popup
+  # size wins instead). claude_session_manager.tmux sizes the prompt popup
+  # to match this default for that reason. Nothing may run after this line
+  # for the popup path — display-popup blocks until the popup closes.
   tm display-popup -w "$w" -h "$h" -E "tmux attach-session -t $session"
 fi

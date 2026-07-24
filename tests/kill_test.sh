@@ -50,10 +50,20 @@ assert_ok test -f "$signals_path"
 
 # plain session without worktree: no stderr, worktree:none
 $TMUX_CMD new-session -d -s claude-alpha-plain -c "$repo" 'sleep 300'
-out="$(agent kill plain --json 2>/tmp/plain_stderr.txt)"
-plain_err="$(cat /tmp/plain_stderr.txt 2>/dev/null || echo)"
+out="$(agent kill plain --json 2>"$T_TMP/plain_stderr.txt")"
+plain_err="$(cat "$T_TMP/plain_stderr.txt" 2>/dev/null || echo)"
 printf '%s' "$out" | jq -e '.worktree == "none"' >/dev/null || _fail plain-json
 [ -z "$plain_err" ] || _fail "plain-stderr: $plain_err"
 assert_fail $TMUX_CMD has-session -t '=claude-alpha-plain'
+
+# loose pane in a session without the claude- prefix: kill must refuse it
+# rather than tearing down the whole session (and whatever else lives in it)
+$TMUX_CMD new-session -d -s work -c "$T_TMP" 'sleep 300'
+work_pid="$($TMUX_CMD list-panes -t work -F '#{pane_pid}')"
+work_pane="$($TMUX_CMD list-panes -t work -F '#{pane_id}')"
+assert_fail agent kill "$work_pane"
+assert_ok $TMUX_CMD has-session -t '=work'
+assert_ok command kill -0 "$work_pid"
+$TMUX_CMD kill-session -t '=work' 2>/dev/null
 
 t_teardown

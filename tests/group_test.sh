@@ -28,4 +28,8 @@ printf '%s' "$out" | jq -e '.targets == ["claude-r-a"]' >/dev/null || _fail idle
 assert_fail agent kill @all
 assert_fail agent read @idle
 
+# @idle with zero matches must fail loudly, not silently "send to nobody"
+export CLAUDE_MOCK_STATUS=busy
+assert_fail agent send @idle 'echo nobody-home'
+
 t_teardown

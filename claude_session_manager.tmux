@@ -24,9 +24,14 @@ tmux bind-key "$list_key" \
   run-shell "$CURRENT_DIR/scripts/list.sh #{q:client_name}"
 
 spawn_key="$(get_tmux_option @claude_spawn_key 'Y')"
+popup_w="$(get_tmux_option @claude_popup_width '90%')"
+popup_h="$(get_tmux_option @claude_popup_height '90%')"
 
 # Spawn a named agent in its own git worktree for the current pane's repo.
 # The popup collects the name with read -r; see spawn-prompt.sh.
+# display-popup itself does not format-expand -E's shell-command, so the
+# #{q:...} formats must be expanded by run-shell first, same as launch_key
+# above. Sized to match the follow-on session popup spawn.sh opens, since
+# tmux "modifies" an already-open popup in place and ignores a new -w/-h.
 tmux bind-key "$spawn_key" \
-  display-popup -w 60% -h 25% \
-  -E "$CURRENT_DIR/scripts/spawn-prompt.sh #{q:pane_current_path} #{q:window_id}"
+  run-shell "tmux display-popup -w $popup_w -h $popup_h -E \"$CURRENT_DIR/scripts/spawn-prompt.sh #{q:pane_current_path} #{q:window_id}\""

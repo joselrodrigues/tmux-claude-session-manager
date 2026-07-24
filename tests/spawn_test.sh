@@ -13,6 +13,8 @@ spawn() {
 
 repo="$(t_repo alpha)"
 
+assert_ok test -x "$SCRIPTS/spawn.sh"
+
 # happy path: worktree, branch, session, options
 assert_ok spawn api "$repo" 'fix the login bug'
 hash8="$(. "$SCRIPTS/helpers.sh"; session_hash "$(git -C "$repo" rev-parse --show-toplevel)")"
@@ -22,6 +24,7 @@ assert_eq "$(git -C "$wt" branch --show-current)" api branch-name
 assert_ok $TMUX_CMD has-session -t '=claude-alpha-api'
 assert_eq "$($TMUX_CMD show-option -t claude-alpha-api -qv @claude_worktree)" "$wt" wt-option
 assert_eq "$($TMUX_CMD show-option -t claude-alpha-api -qv @claude_task)" 'fix the login bug' task-option
+assert_eq "$($TMUX_CMD show-option -t claude-alpha-api -qv @claude_agent_name)" api agent-name-option
 
 # collision: same name again is rejected, not re-attached
 assert_fail spawn api "$repo"

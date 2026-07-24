@@ -8,6 +8,11 @@ agent() { TMUX_SOCKET_OVERRIDE="$TMUX_SOCK" bash "$SCRIPTS/agent.sh" "$@"; }
 $TMUX_CMD new-session -d -s claude-alpha-api  -c "$T_TMP" 'bash --norc'
 $TMUX_CMD new-session -d -s claude-beta-api   -c "$T_TMP" 'bash --norc'
 $TMUX_CMD new-session -d -s claude-alpha-docs -c "$T_TMP" 'bash --norc'
+# resolve_sessions' bare-name lookup now keys off this option (spawn.sh sets
+# it); set it by hand since these sessions are built manually, not spawned.
+$TMUX_CMD set-option -t claude-alpha-api  @claude_agent_name api
+$TMUX_CMD set-option -t claude-beta-api   @claude_agent_name api
+$TMUX_CMD set-option -t claude-alpha-docs @claude_agent_name docs
 sleep 1
 
 # bare unique name resolves; ambiguous bare name fails; full session works

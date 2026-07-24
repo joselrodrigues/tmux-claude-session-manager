@@ -46,8 +46,24 @@ $(tm list-sessions -F '#{session_name}' 2>/dev/null | grep "^$prefix")
 EOF2
     ;;
   *)
-    matches="$(tm list-sessions -F '#{session_name}' 2>/dev/null |
-      grep -E "^${prefix}.+-${t}$")"
+    # Prefer the exact @claude_agent_name spawn.sh stamped on the session;
+    # only fall back to the "prefix + repo + name" regex for sessions
+    # created before that option existed (or made by hand, e.g. tests).
+    local by_name='' s2
+    while IFS= read -r s2; do
+      [ -z "$s2" ] && continue
+      [ "$(tm show-option -t "$s2" -qv @claude_agent_name 2>/dev/null)" = "$t" ] &&
+        by_name="${by_name:+$by_name
+}$s2"
+    done <<EOF3
+$(tm list-sessions -F '#{session_name}' 2>/dev/null | grep "^$prefix")
+EOF3
+    if [ -n "$by_name" ]; then
+      matches="$by_name"
+    else
+      matches="$(tm list-sessions -F '#{session_name}' 2>/dev/null |
+        grep -E "^${prefix}.+-${t}$")"
+    fi
     [ -z "$matches" ] && die "no agent named '$t'"
     # shellcheck disable=SC2086
     [ "$(printf '%s\n' "$matches" | wc -l)" -gt 1 ] &&
@@ -112,6 +128,7 @@ send)
   done
   [ -z "$text" ] && die 'nothing to send'
   sessions="$(resolve_sessions "$target")" || exit $?
+  [ -z "$sessions" ] && die "no agents match $target"
   sent=''
   while IFS= read -r s; do
     pane="$(pane_for_target "$target" "$s")"
@@ -223,10 +240,11 @@ kill)
   json=no
   [ "${1:-}" = --json ] && json=yes
   s="$(resolve_sessions "$target" | head -1)" || exit $?
+  case "$s" in "$prefix"*) ;; *) die "not an agent session: $s" ;; esac
   wt="$(tm show-option -t "$s" -qv @claude_worktree)"
   sigfile=''
   [ -n "$wt" ] && sigfile="$(signals_file "$s")"
-  pane="$(pane_of "$s")"
+  pane="$(pane_for_target "$target" "$s")"
   pid="$(tm display-message -p -t "$pane" '#{pane_pid}')"
 
   # TERM, then wait for real death before touching the worktree — a dying
