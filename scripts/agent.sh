@@ -58,7 +58,16 @@ pane_for_target() {
   esac
 }
 
-cmd="${1:-}"; shift 2>/dev/null || die 'usage: agent.sh <send|read> <target> ...'
+# signals_file <session> — sidecar path next to the worktree. Inside the
+# worktree it would read as untracked -> dirty -> kill would never clean.
+signals_file() {
+  local wt
+  wt="$(tm show-option -t "$1" -qv @claude_worktree)"
+  [ -z "$wt" ] && die "$1 has no worktree (not a spawned agent)"
+  printf '%s/.%s.signals' "$(dirname "$wt")" "$(basename "$wt")"
+}
+
+cmd="${1:-}"; shift 2>/dev/null || die 'usage: agent.sh <send|read|signal|wait> <target> ...'
 target="${1:-}"; shift 2>/dev/null || die 'missing target'
 
 case "$cmd" in
@@ -110,6 +119,72 @@ read)
   else
     printf '%s\n' "$out"
   fi
+  ;;
+signal)
+  type='' body='' json=no
+  while [ $# -gt 0 ]; do
+    case "$1" in
+    --body) body="${2:-}"; shift ;;
+    --json) json=yes ;;
+    done | blocked) type="$1" ;;
+    esac
+    shift
+  done
+  [ -z "$type" ] && die 'signal type must be done or blocked'
+  s="$(resolve_sessions "$target" | head -1)" || exit $?
+  f="$(signals_file "$s")"
+  printf '%s\t%s\t%s\n' "$(date +%s)" "$type" "$body" >>"$f"
+  [ "$json" = yes ] && printf '{"ok":true,"signaled":"%s"}\n' "$type" || echo "signaled $type"
+  ;;
+wait)
+  mode='' want='' timeout=300 use_regex=no json=no
+  while [ $# -gt 0 ]; do
+    case "$1" in
+    --signal) mode=signal; want="${2:-}"; shift ;;
+    --match) mode=match; want="${2:-}"; shift ;;
+    --status) mode=status; want="${2:-}"; shift ;;
+    --regex) use_regex=yes ;;
+    --timeout) timeout="${2:-300}"; shift ;;
+    --json) json=yes ;;
+    esac
+    shift
+  done
+  [ -z "$mode" ] && die 'wait needs --signal, --match, or --status'
+  s="$(resolve_sessions "$target" | head -1)" || exit $?
+  deadline=$((SECONDS + timeout))
+  while [ "$SECONDS" -lt "$deadline" ]; do
+    case "$mode" in
+    signal)
+      f="$(signals_file "$s")"
+      if [ -f "$f" ] && line="$(awk -F'\t' -v t="$want" '$2 == t { print; exit }' "$f")" && [ -n "$line" ]; then
+        body="$(printf '%s' "$line" | cut -f3-)"
+        [ "$json" = yes ] &&
+          printf '%s' "$body" | jq -Rs --arg m "$want" '{ok: true, matched: $m, body: .}' ||
+          echo "$want: $body"
+        exit 0
+      fi
+      ;;
+    match)
+      out="$(tm capture-pane -p -t "$(pane_for_target "$target" "$s")")"
+      if [ "$use_regex" = yes ]; then hit() { printf '%s' "$out" | grep -qE -- "$want"; }
+      else hit() { printf '%s' "$out" | grep -qF -- "$want"; }; fi
+      if hit; then
+        [ "$json" = yes ] && printf '{"ok":true,"matched":%s}\n' "$(printf '%s' "$want" | jq -Rs .)" || echo "matched"
+        exit 0
+      fi
+      ;;
+    status)
+      st="$(status_of "$s")"   # Task 6
+      if [ "$st" = "$want" ]; then
+        [ "$json" = yes ] && printf '{"ok":true,"matched":"%s"}\n' "$want" || echo "$want"
+        exit 0
+      fi
+      ;;
+    esac
+    sleep 1
+  done
+  [ "$json" = yes ] && echo '{"ok":false,"timeout":true}' || echo 'timeout' >&2
+  exit 1
   ;;
 *)
   die "unknown subcommand '$cmd'"

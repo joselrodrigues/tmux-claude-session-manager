@@ -79,13 +79,14 @@ other Claude instances can orchestrate without parsing human text.
   `recent` adds `-S -<N>` to include scrollback instead of silently
   truncating to the visible screen.
 - `signal <target-self> <done|blocked> [--body <text>]` — append a line
-  (`<epoch>\t<type>\t<body>`) to `.claude-signals` inside the agent's own
-  worktree. Workers are told in their kickoff prompt to run
+  (`<epoch>\t<type>\t<body>`) to a sidecar `<wt_parent>/.<wt_name>.signals`
+  file next to the agent's worktree (not inside it — untracked files would
+  block clean removal). Workers are told in their kickoff prompt to run
   `agent.sh signal done --body "<summary>"` when finished (or `blocked` when
   stuck). Rationale (orca's key lesson): pane-idle is ambiguous — idle can
   mean "done" or "sitting at a question" — so completion is announced
-  explicitly, never inferred. No daemon: the file lives in the worktree and
-  dies with it.
+  explicitly, never inferred. No daemon: the file survives a clean kill and
+  is removed by the user.
 - `wait <target> --signal <done|blocked> [--timeout SECONDS]` — poll-tail the
   target's `.claude-signals` for the type; the reliable coordinator wait.
   `--status`/`--match` remain as fallbacks for agents that never signal.
