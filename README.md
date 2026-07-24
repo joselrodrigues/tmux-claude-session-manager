@@ -86,14 +86,16 @@ as does a Claude you started by hand in an ordinary pane.
 Set any of these before the plugin loads (defaults shown):
 
 ```tmux
-set -g @claude_launch_key     'y'        # prefix key: launch/open for current dir
-set -g @claude_list_key       'u'        # prefix key: open the picker
-set -g @claude_command        'claude'   # command run in new sessions
-set -g @claude_args           ''         # extra args appended to the command
-set -g @claude_session_prefix 'claude-'  # tmux session name prefix
-set -g @claude_popup_width     '90%'     # popup width
-set -g @claude_popup_height    '90%'     # popup height
-set -g @claude_fzf_options    ''         # extra options passed to the fzf picker
+set -g @claude_launch_key     'y'                    # prefix key: launch/open for current dir
+set -g @claude_list_key       'u'                    # prefix key: open the picker
+set -g @claude_spawn_key      'Y'                    # prefix key: spawn named agent
+set -g @claude_command        'claude'               # command run in new sessions
+set -g @claude_args           ''                     # extra args appended to the command
+set -g @claude_session_prefix 'claude-'              # tmux session name prefix
+set -g @claude_worktree_dir   '~/.claude-worktrees'  # where to store worktrees
+set -g @claude_popup_width    '90%'                  # popup width
+set -g @claude_popup_height   '90%'                  # popup height
+set -g @claude_fzf_options    ''                     # extra options passed to the fzf picker
 ```
 
 For example, to skip permission prompts in launched sessions:
@@ -167,7 +169,7 @@ so tmux stores a literal `$` (in a single-quoted value, use a bare
 ## Named agents & worktrees
 
 Named agents let a coordinator Claude (or any script) orchestrate the fleet
-without attaching. Launch with `prefix` + `y` from any directory, then send
+without attaching. Launch with `prefix` + `Y` from any directory, then send
 tasks and wait for completion via CLI.
 
 ### Spawn and control
@@ -177,9 +179,9 @@ tasks and wait for completion via CLI.
 | `spawn.sh <name> <repo> "<task>" [--no-popup]` | Launch a named agent for `<repo>` with the given task. Reuses worktree if name exists in that repo. |
 | `agent.sh send <name\|@target> '<message>'` | Send text to an agent or group target. |
 | `agent.sh read <name> [--lines N]` | Print agent's pane output. |
-| `agent.sh wait <name> --signal <done\|blocked> [--timeout SEC] [--json]` | Block until signal is sent, status matches, or timeout. |
+| `agent.sh wait <name> [--status <waiting\|idle\|busy>] [--match <text> [--regex]] [--signal <done\|blocked>] [--timeout SEC] [--json]` | Block until status matches, text appears, or signal is sent. |
 | `agent.sh signal <name> <done\|blocked> [--body "<summary>"]` | Send a completion signal. |
-| `agent.sh kill <name>` | Kill the agent (worktree preserved; branch stays). |
+| `agent.sh kill <name>` | Kill the agent; clean worktree removed, dirty preserved; branch always survives. |
 
 ### Group targets
 
@@ -189,14 +191,15 @@ Send to multiple agents with `@all`, `@idle`, `@waiting`, or `@busy`:
 agent.sh send @idle 'pick up the next task from TODO.md'
 ```
 
-### Configuration
+### Picker bindings
 
-Set before the plugin loads (defaults shown):
+When inside the picker (opened with `prefix` + `u`), these bindings work for named agents:
 
-```tmux
-set -g @claude_spawn_key       'y'                    # key: spawn named agent
-set -g @claude_worktree_dir    '~/.claude-worktrees'  # where to store worktrees
-```
+| Key      | Action                     |
+| -------- | -------------------------- |
+| `ctrl-n` | Spawn a new agent          |
+| `ctrl-s` | Send text to agent         |
+| `ctrl-x` | Kill agent + cleanup       |
 
 ### Full workflow
 
