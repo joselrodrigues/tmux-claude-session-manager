@@ -67,6 +67,24 @@ signals_file() {
   printf '%s/.%s.signals' "$(dirname "$wt")" "$(basename "$wt")"
 }
 
+# status_of <session> — waiting|idle|busy from `claude agents --json`,
+# joined by tty: the pane's tty must equal the agent pid's tty (agents.sh
+# uses the same identity rule). Empty when the supervisor doesn't know the
+# agent (yet) — callers treat that as "keep waiting".
+status_of() {
+  local tty pid st
+  tty="$(tm display-message -p -t "$(pane_of "$1")" '#{pane_tty}')"
+  tty="${tty#/dev/}"
+  while IFS=$'\t' read -r pid st; do
+    [ "$(ps -o tty= -p "$pid" 2>/dev/null | tr -d ' ')" = "$tty" ] &&
+      { printf '%s' "$st"; return 0; }
+  done <<EOF
+$(claude agents --json 2>/dev/null |
+  jq -r '.[] | select(.kind == "interactive") | [.pid, .status] | @tsv' 2>/dev/null)
+EOF
+  return 0
+}
+
 cmd="${1:-}"; shift 2>/dev/null || die 'usage: agent.sh <send|read|signal|wait> <target> ...'
 target="${1:-}"; shift 2>/dev/null || die 'missing target'
 
