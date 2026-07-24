@@ -85,10 +85,11 @@ other Claude instances can orchestrate without parsing human text.
   `agent.sh signal done --body "<summary>"` when finished (or `blocked` when
   stuck). Rationale (orca's key lesson): pane-idle is ambiguous — idle can
   mean "done" or "sitting at a question" — so completion is announced
-  explicitly, never inferred. No daemon: the file survives a clean kill and
-  is removed by the user.
+  explicitly, never inferred. No daemon: `kill` deletes the file when it
+  removes a clean worktree; a preserved (dirty) worktree keeps it.
 - `wait <target> --signal <done|blocked> [--timeout SECONDS]` — poll-tail the
-  target's `.claude-signals` for the type; the reliable coordinator wait.
+  target's sidecar `.signals` file for the type; the reliable coordinator
+  wait.
   `--status`/`--match` remain as fallbacks for agents that never signal.
 - `kill <target>` — kill the Claude pid, poll `kill -0` until the process is
   actually gone (bounded, then SIGKILL) so late writes can't corrupt the
