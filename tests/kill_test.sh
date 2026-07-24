@@ -48,4 +48,12 @@ printf '%s' "$out" | jq -e '.worktree == "preserved"' >/dev/null || _fail locked
 assert_ok test -d "$wt_path"
 assert_ok test -f "$signals_path"
 
+# plain session without worktree: no stderr, worktree:none
+$TMUX_CMD new-session -d -s claude-alpha-plain -c "$repo" 'sleep 300'
+out="$(agent kill plain --json 2>/tmp/plain_stderr.txt)"
+plain_err="$(cat /tmp/plain_stderr.txt 2>/dev/null || echo)"
+printf '%s' "$out" | jq -e '.worktree == "none"' >/dev/null || _fail plain-json
+[ -z "$plain_err" ] || _fail "plain-stderr: $plain_err"
+assert_fail $TMUX_CMD has-session -t '=claude-alpha-plain'
+
 t_teardown

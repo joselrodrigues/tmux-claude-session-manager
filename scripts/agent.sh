@@ -209,7 +209,8 @@ kill)
   [ "${1:-}" = --json ] && json=yes
   s="$(resolve_sessions "$target" | head -1)" || exit $?
   wt="$(tm show-option -t "$s" -qv @claude_worktree)"
-  sigfile="$(signals_file "$s")"
+  sigfile=''
+  [ -n "$wt" ] && sigfile="$(signals_file "$s")"
   pane="$(pane_of "$s")"
   pid="$(tm display-message -p -t "$pane" '#{pane_pid}')"
 
