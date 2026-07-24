@@ -63,7 +63,10 @@ other Claude instances can orchestrate without parsing human text.
 - `send <target> <text...>` — `tmux send-keys` the text, then Enter.
   `--no-enter` sends the literal text only. (Divergence: herdr's `agent send`
   is literal-only and `pane run` adds Enter; here the prompt-sending case is
-  the default.)
+  the default.) Group targets (orca-style): `@all` resolves to every agent
+  session, `@idle` / `@waiting` / `@busy` to agents currently in that status;
+  `send` loops over the resolved set. "Tell every idle agent to pick up the
+  next task" becomes one command.
 - `wait <target> --status <waiting|idle|busy> [--timeout SECONDS]` — poll
   `claude agents --json` (1s interval) until the target's status matches.
   Note: `wait --status busy` immediately after `send` can race a stale
@@ -75,6 +78,17 @@ other Claude instances can orchestrate without parsing human text.
 - `read <target> [--lines N] [--source visible|recent]` — `capture-pane -p`;
   `recent` adds `-S -<N>` to include scrollback instead of silently
   truncating to the visible screen.
+- `signal <target-self> <done|blocked> [--body <text>]` — append a line
+  (`<epoch>\t<type>\t<body>`) to `.claude-signals` inside the agent's own
+  worktree. Workers are told in their kickoff prompt to run
+  `agent.sh signal done --body "<summary>"` when finished (or `blocked` when
+  stuck). Rationale (orca's key lesson): pane-idle is ambiguous — idle can
+  mean "done" or "sitting at a question" — so completion is announced
+  explicitly, never inferred. No daemon: the file lives in the worktree and
+  dies with it.
+- `wait <target> --signal <done|blocked> [--timeout SECONDS]` — poll-tail the
+  target's `.claude-signals` for the type; the reliable coordinator wait.
+  `--status`/`--match` remain as fallbacks for agents that never signal.
 - `kill <target>` — kill the Claude pid, poll `kill -0` until the process is
   actually gone (bounded, then SIGKILL) so late writes can't corrupt the
   clean-check. Then: session has `@claude_worktree` and
@@ -88,8 +102,15 @@ Exit 0 on success/match, 1 on timeout/failure. Default wait timeout 300s.
 Scripts are directly invocable, so one Claude can spawn and drive others —
 that is the orchestration story; no extra daemon or socket, tmux is the
 server. A short `docs/orchestration.md` documents the coordinator loop
-(spawn → send → wait → read → decide), which covers what orca implements as
-a structured message bus.
+(spawn → send task+signal contract → `wait --signal done` → read → decide),
+which covers what orca implements as a structured message bus. The doc
+distinguishes the three terminal states a coordinator must handle: `done`
+(finished, summary in the signal body), `blocked` (stuck, hand back to the
+human), and status `waiting` with no signal (agent is asking a question —
+`read` the pane and answer or escalate). Fan-out/compare stays manual by
+design: spawn N agents on the same prompt, eyeball diffs, keep the winner,
+kill the rest — orca ships no compare/merge tooling either; the human
+judging is the point.
 
 ## 3. Dashboard — extend `agents.sh` + `picker.sh`
 
