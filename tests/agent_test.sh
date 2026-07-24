@@ -4,7 +4,7 @@ t_setup
 
 agent() { TMUX_SOCKET_OVERRIDE="$TMUX_SOCK" bash "$SCRIPTS/agent.sh" "$@"; }
 
-# two agent-shaped sessions running plain shells (send/read work on any pane)
+# three agent-shaped sessions running plain shells (send/read work on any pane)
 $TMUX_CMD new-session -d -s claude-alpha-api  -c "$T_TMP" 'bash --norc'
 $TMUX_CMD new-session -d -s claude-beta-api   -c "$T_TMP" 'bash --norc'
 $TMUX_CMD new-session -d -s claude-alpha-docs -c "$T_TMP" 'bash --norc'
@@ -13,6 +13,19 @@ $TMUX_CMD new-session -d -s claude-alpha-docs -c "$T_TMP" 'bash --norc'
 $TMUX_CMD set-option -t claude-alpha-api  @claude_agent_name api
 $TMUX_CMD set-option -t claude-beta-api   @claude_agent_name api
 $TMUX_CMD set-option -t claude-alpha-docs @claude_agent_name docs
+
+# Test case: stamped session with name that would regex-match bogus target.
+# claude-my-api-v2 is stamped as v2; a request for api-v2 should fail,
+# not fall back to regex and accidentally match v2.
+$TMUX_CMD new-session -d -s claude-my-api-v2 -c "$T_TMP" 'bash --norc'
+$TMUX_CMD set-option -t claude-my-api-v2 @claude_agent_name v2
+
+# Legacy test: unstamped session should still match via regex when no
+# stamped sessions are checked. This session is made after all the stamped
+# ones, so resolve_sessions will see has_any_stamp=yes and NOT try regex
+# for other lookups. We'll test it specifically via full session name.
+$TMUX_CMD new-session -d -s claude-legacy-query -c "$T_TMP" 'bash --norc'
+
 sleep 1
 
 # bare unique name resolves; ambiguous bare name fails; full session works
@@ -53,5 +66,23 @@ assert_fail agent read nosuchagent
 # --json shapes
 agent send docs --json 'true' | jq -e '.ok == true and (.targets | length) == 1' >/dev/null || _fail send-json
 agent read claude-alpha-docs --json | jq -e '.ok == true and (.lines | type) == "string"' >/dev/null || _fail read-json
+
+# stamped-sessions-only test: regex fallback must be disabled
+# claude-my-api-v2 is stamped as v2; api-v2 is NOT a stamp and would regex-match
+# (claude-my-<api>-<v2>), but with stamped sessions present, regex is forbidden.
+assert_fail agent send api-v2 'echo should-fail'
+
+# but exact stamp match on v2 must work
+assert_ok agent send v2 'echo v2-got-it'
+sleep 1
+out="$(agent read claude-my-api-v2 --lines 5)"
+case "$out" in *v2-got-it*) : ;; *) _fail "stamped v2 lookup failed: $out" ;; esac
+
+# legacy/unstamped session still works via full session name
+# (It can't be tested via bare name because stamped sessions exist)
+assert_ok agent send claude-legacy-query 'echo legacy-ok'
+sleep 1
+out="$(agent read claude-legacy-query --lines 5)"
+case "$out" in *legacy-ok*) : ;; *) _fail "legacy session failed: $out" ;; esac
 
 t_teardown

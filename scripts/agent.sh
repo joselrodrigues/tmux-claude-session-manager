@@ -49,10 +49,14 @@ EOF2
     # Prefer the exact @claude_agent_name spawn.sh stamped on the session;
     # only fall back to the "prefix + repo + name" regex for sessions
     # created before that option existed (or made by hand, e.g. tests).
-    local by_name='' s2
+    # If ANY session carries a stamp, trust only exact matches — regex
+    # fallback is unsafe when stamped agents coexist with regex-matchable names.
+    local by_name='' s2 has_any_stamp=no agent_name matches=''
     while IFS= read -r s2; do
       [ -z "$s2" ] && continue
-      [ "$(tm show-option -t "$s2" -qv @claude_agent_name 2>/dev/null)" = "$t" ] &&
+      agent_name="$(tm show-option -t "$s2" -qv @claude_agent_name 2>/dev/null)"
+      [ -n "$agent_name" ] && has_any_stamp=yes
+      [ "$agent_name" = "$t" ] &&
         by_name="${by_name:+$by_name
 }$s2"
     done <<EOF3
@@ -60,7 +64,8 @@ $(tm list-sessions -F '#{session_name}' 2>/dev/null | grep "^$prefix")
 EOF3
     if [ -n "$by_name" ]; then
       matches="$by_name"
-    else
+    elif [ "$has_any_stamp" = no ]; then
+      # Only try regex if no stamped sessions exist (legacy behavior)
       matches="$(tm list-sessions -F '#{session_name}' 2>/dev/null |
         grep -E "^${prefix}.+-${t}$")"
     fi
