@@ -16,12 +16,12 @@ list_key="$(get_tmux_option @claude_list_key 'u')"
 # #{pane_current_path} / #{window_id} are expanded by run-shell before the args
 # reach the script.
 tmux bind-key "$launch_key" \
-  run-shell "$CURRENT_DIR/scripts/launch.sh '#{q:pane_current_path}' '#{q:window_id}'"
+  run-shell "$CURRENT_DIR/scripts/launch.sh #{q:pane_current_path} #{q:window_id}"
 
 # Open the session picker. When pressed from inside a session popup, list.sh
 # closes that popup first so the picker opens full-size on the outer client.
 tmux bind-key "$list_key" \
-  run-shell "$CURRENT_DIR/scripts/list.sh '#{q:client_name}'"
+  run-shell "$CURRENT_DIR/scripts/list.sh #{q:client_name}"
 
 spawn_key="$(get_tmux_option @claude_spawn_key 'Y')"
 
@@ -29,4 +29,4 @@ spawn_key="$(get_tmux_option @claude_spawn_key 'Y')"
 # The popup collects the name with read -r; see spawn-prompt.sh.
 tmux bind-key "$spawn_key" \
   display-popup -w 60% -h 25% \
-  -E "$CURRENT_DIR/scripts/spawn-prompt.sh '#{q:pane_current_path}' '#{q:window_id}'"
+  -E "$CURRENT_DIR/scripts/spawn-prompt.sh #{q:pane_current_path} #{q:window_id}"
