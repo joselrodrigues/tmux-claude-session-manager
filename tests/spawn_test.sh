@@ -15,7 +15,7 @@ repo="$(t_repo alpha)"
 
 # happy path: worktree, branch, session, options
 assert_ok spawn api "$repo" 'fix the login bug'
-hash8="$(. "$SCRIPTS/helpers.sh"; session_hash "$repo")"
+hash8="$(. "$SCRIPTS/helpers.sh"; session_hash "$(git -C "$repo" rev-parse --show-toplevel)")"
 wt="$WT_BASE/alpha-$hash8/api"
 assert_ok test -d "$wt"
 assert_eq "$(git -C "$wt" branch --show-current)" api branch-name

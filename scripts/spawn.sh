@@ -50,7 +50,7 @@ tm has-session -t "=$session" 2>/dev/null &&
   die "agent '$name' already running for $repo ($session)"
 
 wt_base="$(expand_tilde "$(get_tmux_option @claude_worktree_dir "$HOME/.claude-worktrees")")"
-wt_dir="$wt_base/${repo}-$(session_hash "$path")/$name"
+wt_dir="$wt_base/${repo}-$(session_hash "$repo_root")/$name"
 
 if [ ! -d "$wt_dir" ]; then
   mkdir -p "$(dirname "$wt_dir")"
