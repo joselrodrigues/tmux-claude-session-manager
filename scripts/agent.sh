@@ -104,8 +104,10 @@ signals_file() {
 # uses the same identity rule). Empty when the supervisor doesn't know the
 # agent (yet) — callers treat that as "keep waiting".
 status_of() {
-  local tty pid st
-  tty="$(tm display-message -p -t "$(pane_of "$1")" '#{pane_tty}')"
+  local tty pid st pane
+  pane="$(pane_of "$1")"
+  [ -z "$pane" ] && return 0
+  tty="$(tm display-message -p -t "$pane" '#{pane_tty}')"
   tty="${tty#/dev/}"
   while IFS=$'\t' read -r pid st; do
     [ "$(ps -o tty= -p "$pid" 2>/dev/null | tr -d ' ')" = "$tty" ] &&
@@ -221,7 +223,9 @@ wait)
       fi
       ;;
     match)
-      out="$(tm capture-pane -p -t "$(pane_for_target "$target" "$s")")"
+      pane="$(pane_for_target "$target" "$s")"
+      [ -z "$pane" ] && die "cannot resolve pane for $s"
+      out="$(tm capture-pane -p -t "$pane")"
       if [ "$use_regex" = yes ]; then hit() { printf '%s' "$out" | grep -qE -- "$want"; }
       else hit() { printf '%s' "$out" | grep -qF -- "$want"; }; fi
       if hit; then

@@ -31,8 +31,8 @@ popup_h="$(get_tmux_option @claude_popup_height '90%')"
 # The popup collects the name with read -r; see spawn-prompt.sh.
 # display-popup itself does not format-expand -E's shell-command, so the
 # #{q:...} formats must be expanded by run-shell first, same as launch_key
-# above. Sized to match the follow-on session popup spawn.sh opens, since
-# tmux "modifies" an already-open popup in place and ignores a new -w/-h.
+# above. Sized for the agent session too, since spawn-prompt.sh attaches to
+# it in this same popup instead of opening a follow-on one.
 tmux bind-key "$spawn_key" \
   run-shell "tmux display-popup -w $popup_w -h $popup_h -E \"$CURRENT_DIR/scripts/spawn-prompt.sh #{q:pane_current_path} #{q:window_id}\""
 

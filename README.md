@@ -179,7 +179,7 @@ tasks and wait for completion via CLI.
 
 | Command | Action |
 | ------- | ------ |
-| `spawn.sh <name> <repo> "<task>" [--no-popup]` | Launch a named agent for `<repo>` with the given task. Reuses worktree if name exists in that repo. |
+| `spawn.sh [name] [repo] ["task"]` | Launch a named agent for `<repo>` with the given task; prints the session name on stdout. `name` is optional — empty auto-generates `agentN` (names cannot contain dots). Reuses worktree if name exists in that repo. `--no-popup` is accepted for CLI compatibility but is a no-op. |
 | `agent.sh send <name\|@target> '<message>'` | Send text to an agent or group target. |
 | `agent.sh read <name> [--lines N]` | Print agent's pane output. |
 | `agent.sh wait <name> [--status <waiting\|idle\|busy>] [--match <text> [--regex]] [--signal <done\|blocked>] [--timeout SEC] [--json]` | Block until status matches, text appears, or signal is sent. |
@@ -200,7 +200,7 @@ When inside the picker (opened with `prefix` + `u`), these bindings work for nam
 
 | Key      | Action                     |
 | -------- | -------------------------- |
-| `ctrl-n` | Spawn a new agent          |
+| `ctrl-n` | Spawn a new agent, attaching to it in place |
 | `ctrl-s` | Send text to agent         |
 | `ctrl-x` | Kill agent + cleanup       |
 

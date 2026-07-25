@@ -37,15 +37,15 @@ spawn_dir="$(tmux display-message -p -t "${parent:-}" '#{pane_current_path}' 2>/
 
 # ctrl-x routes through agent.sh kill (worktree cleanup) with the pane id;
 # ctrl-s prompts on the picker's own tty and sends without attaching;
-# ctrl-n swaps this popup's process for the spawn prompt (spawn uses
-# --no-popup — opening a nested popup from inside one hangs; see list.sh).
+# ctrl-n swaps this popup's process for the spawn prompt, which attaches to
+# the new agent in place once it's spawned.
 sel=$("$DIR/agents.sh" | fzf --ansi --delimiter='\t' --with-nth=5.. \
   --reverse --cycle \
   --header='Claude agents · enter: jump · ctrl-n: new · ctrl-s: send · ctrl-x: kill' \
   --preview='tmux capture-pane -ept {2}' --preview-window='up,70%,follow' \
   --bind="ctrl-x:execute-silent($DIR/agent.sh kill {2} || kill {3})+reload(sleep 0.3; $self --list)" \
   --bind="ctrl-s:execute(printf 'send> '; IFS= read -r p; [ -n \"\$p\" ] && $DIR/agent.sh send {2} \"\$p\")+reload(sleep 0.3; $self --list)" \
-  --bind="ctrl-n:become($DIR/spawn-prompt.sh $(printf '%q' "$spawn_dir") --no-popup)" \
+  --bind="ctrl-n:become($DIR/spawn-prompt.sh $(printf '%q' "$spawn_dir"))" \
   ${extra_opts[@]+"${extra_opts[@]}"})
 
 [ -z "$sel" ] && exit 0

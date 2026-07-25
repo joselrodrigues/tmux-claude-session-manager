@@ -37,4 +37,12 @@ assert_ok agent wait worker --match 'ABC-[0-9]+' --regex --timeout 10
 agent wait worker --signal blocked --timeout 1 --json |
   jq -e '.ok == false and .timeout == true' >/dev/null || _fail wait-json
 
+# wait --match on a session killed mid-flight must fail, not fall back to
+# reading whatever pane tmux's `-t ""` defaults to
+$TMUX_CMD new-session -d -s claude-repo-ghost -c "$wt" 'bash --norc'
+$TMUX_CMD set-option -t claude-repo-ghost @claude_worktree "$wt"
+assert_ok agent send ghost 'echo GHOST-MAGIC-TOKEN'
+$TMUX_CMD kill-session -t claude-repo-ghost
+assert_fail agent wait ghost --match 'GHOST-MAGIC-TOKEN' --timeout 2
+
 t_teardown

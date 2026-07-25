@@ -2,10 +2,12 @@
 
 Every script is a plain CLI — a coordinator Claude (or you) can drive the
 whole fleet without attaching. `S=~/.tmux/plugins/tmux-claude-session-manager/scripts`.
+`spawn.sh` prints the spawned session name on stdout; the name argument is
+optional — omit it (or pass `''`) for an auto-generated `agentN`.
 
 ## The coordinator loop
 
-    "$S/spawn.sh" api ~/work/repo "implement the /login endpoint" --no-popup
+    "$S/spawn.sh" api ~/work/repo "implement the /login endpoint"
     "$S/agent.sh" send api 'Implement /login per the spec in docs/auth.md.
     When you finish, run: '"$S"'/agent.sh signal api done --body "<one-line summary>".
     If you get stuck, signal blocked instead.'
@@ -26,7 +28,7 @@ got the contract.
 
 ## Fan-out
 
-    for n in try-a try-b try-c; do "$S/spawn.sh" "$n" ~/work/repo "same task" --no-popup; done
+    for n in try-a try-b try-c; do "$S/spawn.sh" "$n" ~/work/repo "same task"; done
     "$S/agent.sh" send @all 'Task: ... signal done when finished.'
     # wait on each, then compare in the picker (branch column shows dirty state),
     # keep the winner's branch, kill the rest. Comparing/merging stays manual —

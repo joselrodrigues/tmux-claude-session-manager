@@ -60,4 +60,8 @@ assert_ok $TMUX_CMD has-session -t '=claude-dotrepo-agent1'
 assert_ok spawn '' "$dotrepo"
 assert_ok $TMUX_CMD has-session -t '=claude-dotrepo-agent2'
 
+# stdout contract: spawn.sh prints only the session name (callers like
+# spawn-prompt.sh attach to exactly this)
+assert_eq "$(spawn foo2 "$repo")" claude-alpha-foo2 stdout-session-name
+
 t_teardown
