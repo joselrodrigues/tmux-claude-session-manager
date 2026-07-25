@@ -35,3 +35,15 @@ popup_h="$(get_tmux_option @claude_popup_height '90%')"
 # tmux "modifies" an already-open popup in place and ignores a new -w/-h.
 tmux bind-key "$spawn_key" \
   run-shell "tmux display-popup -w $popup_w -h $popup_h -E \"$CURRENT_DIR/scripts/spawn-prompt.sh #{q:pane_current_path} #{q:window_id}\""
+
+# Notifications. tmux has no periodic hook, so pulse.sh rides status-interval as
+# a `#()` in status-right (it prints nothing). Installed twice on purpose: once
+# now, and once per client-attached, because a .tmux.conf that sets status-right
+# after tpm's `run` would clobber the load-time append. The install itself is
+# idempotent, and @claude_sound_enabled is read by pulse.sh at poll time, not
+# here, so toggling it takes effect without a tmux restart.
+"$CURRENT_DIR/scripts/pulse.sh" install
+# -a appends unconditionally, so the guard is what keeps a tpm reload from
+# stacking a second copy of the same hook.
+tmux show-hooks -g 2>/dev/null | grep -q 'pulse.sh install' ||
+  tmux set-hook -ag client-attached "run-shell -b \"$CURRENT_DIR/scripts/pulse.sh install\""

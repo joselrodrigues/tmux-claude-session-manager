@@ -96,6 +96,9 @@ set -g @claude_worktree_dir   '~/.claude-worktrees'  # where to store worktrees
 set -g @claude_popup_width    '90%'                  # popup width
 set -g @claude_popup_height   '90%'                  # popup height
 set -g @claude_fzf_options    ''                     # extra options passed to the fzf picker
+set -g @claude_sound_enabled  'on'                   # background-agent notification sounds
+set -g @claude_sound_done     '~/.claude/sounds/terminado.mp3'  # played on busy -> idle
+set -g @claude_sound_request  '~/.claude/sounds/esperando.mp3'  # played on busy -> waiting
 ```
 
 For example, to skip permission prompts in launched sessions:
@@ -200,6 +203,42 @@ When inside the picker (opened with `prefix` + `u`), these bindings work for nam
 | `ctrl-n` | Spawn a new agent          |
 | `ctrl-s` | Send text to agent         |
 | `ctrl-x` | Kill agent + cleanup       |
+
+### Notifications
+
+Agents you are not looking at ring when they change state, so you can leave them
+running and go back to your own window:
+
+| Transition       | Sound                     | Message                       |
+| ---------------- | ------------------------- | ----------------------------- |
+| `busy` → `idle`  | `@claude_sound_done`      | `claude: <name> finished`     |
+| `busy` → `waiting` | `@claude_sound_request` | `claude: <name> needs input`  |
+
+An agent is considered **focused** — and therefore silent — only when its
+session is attached *and* its pane is the active pane of the active window. An
+agent in a background window of the session you are attached to still rings.
+tmux cannot see whether the terminal emulator itself is in the foreground, so an
+attached client behind another app still counts as focused.
+
+Mute one agent without silencing the rest:
+
+```bash
+tmux set-option -t claude-myrepo-api @claude_sound_mute on
+```
+
+`~/.claude/mute` (the file `cmute`/`cunmute` toggle) silences everything, and
+`set -g @claude_sound_enabled off` disables the feature at the next poll — no
+tmux restart needed.
+
+The poll rides the tmux status line: `pulse.sh` appends a `#()` to
+`status-right` at load and on every `client-attached`, which means the status
+line must be on (`set -g status on`) and `status-interval` decides the latency —
+with the default `15` a notification can lag up to 15 seconds. Each poll is one
+short-lived process; there is no daemon.
+
+The default sound paths point at `~/.claude/sounds/*.mp3`, the same files the
+Claude Code notification hook uses. Nothing plays if they are missing — point
+the options at your own files if you keep them elsewhere.
 
 ### Full workflow
 
