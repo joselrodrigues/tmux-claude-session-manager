@@ -23,10 +23,10 @@ die() {
   exit 1
 }
 
-name='' path='' task='' popup=yes window=''
+name='' path='' task='' window=''
 while [ $# -gt 0 ]; do
   case "$1" in
-  --no-popup) popup=no ;;
+  --no-popup) : ;;
   --window) window="${2:-}"; shift ;;
   *)
     if [ -z "$name" ]; then name="$1"
@@ -63,11 +63,12 @@ if [ ! -d "$wt_dir" ]; then
   else
     err="$(git -C "$repo_root" worktree add -b "$name" "$wt_dir" 2>&1)" || die "$err"
   fi
-  # Output stays visible: a first init clones every submodule from scratch,
-  # which can take minutes — silenced, the popup looks frozen mid-spawn.
+  # Progress stays visible (on stderr — stdout is reserved for the session
+  # name): a first init clones every submodule from scratch, which can take
+  # minutes — silenced, the popup looks frozen mid-spawn.
   if [ -f "$wt_dir/.gitmodules" ]; then
-    echo "initializing submodules (first time can take a while)..."
-    git -C "$wt_dir" submodule update --init --recursive
+    echo "initializing submodules (first time can take a while)..." >&2
+    git -C "$wt_dir" submodule update --init --recursive 1>&2
   fi
 fi
 
@@ -82,13 +83,8 @@ tm set-option -t "$session" @claude_agent_name "$name"
 [ -n "$window" ] && tm set-option -t "$session" @claude_origin "$window"
 tm select-pane -t "$session:" -T "$name" 2>/dev/null
 
-if [ "$popup" = yes ]; then
-  w="$(get_tmux_option @claude_popup_width '90%')"
-  h="$(get_tmux_option @claude_popup_height '90%')"
-  # When spawn.sh runs inside the spawn-prompt popup, tmux "modifies" that
-  # already-open popup in place and ignores this -w/-h (the caller's popup
-  # size wins instead). claude_session_manager.tmux sizes the prompt popup
-  # to match this default for that reason. Nothing may run after this line
-  # for the popup path — display-popup blocks until the popup closes.
-  tm display-popup -w "$w" -h "$h" -E "tmux attach-session -t $session"
-fi
+# No display-popup here: nesting a popup from inside the spawn-prompt popup
+# does not work in practice. The caller owns the popup — spawn-prompt.sh
+# attaches in place using the session name printed below. --no-popup is
+# still accepted for compatibility; behavior is identical.
+printf '%s\n' "$session"
