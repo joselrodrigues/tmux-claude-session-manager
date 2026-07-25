@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Spawn a named Claude agent: worktree + dedicated session (+ popup).
-#   spawn.sh <name> [dir] [task] [--no-popup] [--window <window-id>]
+# Spawn a named Claude agent: worktree + dedicated session.
+#   spawn.sh <name> [dir] [task] [--no-popup]
 # TMUX_SOCKET_OVERRIDE reroutes every tmux call (tests use a scratch server).
 set -uo pipefail
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -23,11 +23,14 @@ die() {
   exit 1
 }
 
-name='' path='' task='' window='' pos=0
+name='' path='' task='' pos=0
 while [ $# -gt 0 ]; do
   case "$1" in
   --no-popup) : ;;
-  --window) window="${2:-}"; shift ;;
+  # Accepted and ignored, like --no-popup: agents no longer record an origin
+  # window. Without this arm the positional-by-index branch below would take
+  # "--window" for the task text and drop the id that follows it, silently.
+  --window) shift ;;
   *)
     # Positional by index, not by first-empty-slot: an empty name argument
     # (auto-name request) must not swallow the path into its slot.
@@ -95,11 +98,10 @@ tm new-session -d -s "$session" -c "$wt_dir" "$cmd" || die "new-session failed"
 tm set-option -t "$session" @claude_worktree "$wt_dir"
 tm set-option -t "$session" @claude_agent_name "$name"
 [ -n "$task" ] && tm set-option -t "$session" @claude_task "$task"
-[ -n "$window" ] && tm set-option -t "$session" @claude_origin "$window"
 tm select-pane -t "$session:" -T "$name" 2>/dev/null
+name_window "$session" "$name"
 
-# No display-popup here: nesting a popup from inside the spawn-prompt popup
-# does not work in practice. The caller owns the popup — spawn-prompt.sh
-# attaches in place using the session name printed below. --no-popup is
-# still accepted for compatibility; behavior is identical.
+# Nothing is opened here: the caller decides where the agent shows up, using
+# the session name printed below (spawn-prompt.sh hands it to open_agent).
+# --no-popup is still accepted for compatibility; behavior is identical.
 printf '%s\n' "$session"

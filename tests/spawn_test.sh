@@ -61,7 +61,49 @@ assert_ok spawn '' "$dotrepo"
 assert_ok $TMUX_CMD has-session -t '=claude-dotrepo-agent2'
 
 # stdout contract: spawn.sh prints only the session name (callers like
-# spawn-prompt.sh attach to exactly this)
+# spawn-prompt.sh hand exactly this to open_agent)
 assert_eq "$(spawn foo2 "$repo")" claude-alpha-foo2 stdout-session-name
+
+# the agent's window is labelled for the status bar, and stays labelled
+assert_eq "$($TMUX_CMD list-windows -t '=claude-alpha-foo2' -F '#{window_name}')" \
+  foo2 window-named-after-agent
+assert_eq "$($TMUX_CMD list-windows -t '=claude-alpha-foo2' -F '#{automatic-rename}')" \
+  0 automatic-rename-off
+
+# open_agent shows an agent as a tab in the caller's session. helpers.sh calls
+# bare `tmux`; shadow it onto the scratch socket inside a subshell so $TMUX_CMD
+# out here keeps working.
+open_agent_t() (
+  # shellcheck disable=SC2329  # called indirectly, from inside helpers.sh
+  tmux() { command tmux -L "$TMUX_SOCK" "$@"; }
+  . "$SCRIPTS/helpers.sh"
+  open_agent "$@"
+)
+tabs_for() { $TMUX_CMD list-windows -t '=host' -F '#{window_id}' | grep -cx "$1"; }
+
+$TMUX_CMD new-session -d -s host -c "$T_TMP" 'sleep 300'
+$TMUX_CMD new-session -d -s hostclient -c "$T_TMP" "env -u TMUX $TMUX_CMD attach -t host"
+sleep 2
+client="$($TMUX_CMD list-clients -t host -F '#{client_name}' | head -1)"
+[ -n "$client" ] || _fail 'no client attached to host, open_agent test would prove nothing'
+agent_win="$($TMUX_CMD list-windows -t '=claude-alpha-foo2' -F '#{window_id}')"
+agent_pid="$($TMUX_CMD list-panes -t '=claude-alpha-foo2' -F '#{pane_pid}')"
+
+assert_ok open_agent_t claude-alpha-foo2 "$client"
+assert_eq "$(tabs_for "$agent_win")" 1 'agent opened as a tab'
+assert_eq "$($TMUX_CMD display-message -p -c "$client" '#{client_session}')" \
+  host 'client still on its own session'
+assert_eq "$($TMUX_CMD list-windows -t '=host' -F '#{window_id}' -f '#{window_active}')" \
+  "$agent_win" 'agent tab is the active window'
+
+# link-window is not idempotent on its own — opening twice must not double the tab
+assert_ok open_agent_t claude-alpha-foo2 "$client"
+assert_eq "$(tabs_for "$agent_win")" 1 'reopening does not duplicate the tab'
+
+# closing the tab is not killing the agent
+$TMUX_CMD unlink-window -t "=host:$agent_win"
+assert_eq "$(tabs_for "$agent_win")" 0 'unlinked tab is gone'
+assert_ok $TMUX_CMD has-session -t '=claude-alpha-foo2'
+assert_ok command kill -0 "$agent_pid"
 
 t_teardown

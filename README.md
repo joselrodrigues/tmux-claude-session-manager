@@ -4,7 +4,7 @@
 
 Run many [Claude Code](https://claude.com/claude-code) sessions across your
 projects, each in its own tmux session — then **list them, see which are done
-vs. still working, and jump to one** from a single popup.
+vs. still working, and open one as a tab** in the session you already work in.
 
 If you launch Claude per-directory (one nested session per project), you quickly
 end up with a dozen of them and no way to tell which are finished without opening
@@ -15,8 +15,8 @@ each one. This plugin gives you:
 - 🟢 **Live status** per agent — `working` / `waiting` / `idle` — read straight
   from `claude agents --json`, so you instantly see which need you. No setup.
 - 👁️ **A live preview** of each agent's screen right in the picker.
-- 🎯 **Smart jump** — selecting an agent switches your client to the window it
-  was launched from, then resumes it in a popup over it.
+- 🎯 **Smart jump** — selecting an agent opens it as a window (tab) of your own
+  session. Close the tab and the agent keeps running.
 - 🚀 **A launcher** (`prefix` + `y`) that opens/attaches a Claude session for the
   current directory.
 - ❌ **Quick kill** (`ctrl-x`) of a finished agent from the picker.
@@ -43,9 +43,10 @@ set -g @plugin 'craftzdog/tmux-claude-session-manager'
 
 Then hit `prefix` + <kbd>I</kbd> to install.
 
-> **Keybinding note:** by default the plugin binds `prefix` + `y` (launch) and
-> `prefix` + `u` (list). If your config binds those elsewhere, either change the
-> options below, or make sure the plugin loads **after** your own bindings (put
+> **Keybinding note:** by default the plugin binds `prefix` + `y` (launch),
+> `prefix` + `u` (list), `prefix` + `Y` (spawn) and `prefix` + `b` (close an
+> agent tab). If your config binds those elsewhere, either change the options
+> below, or make sure the plugin loads **after** your own bindings (put
 > `run '~/.tmux/plugins/tpm/tpm'` _after_ them) so the one you want wins.
 
 ### Manual install
@@ -62,10 +63,19 @@ run-shell ~/clone/path/claude_session_manager.tmux
 
 ## Usage
 
-| Key            | Action                                                                          |
-| -------------- | ------------------------------------------------------------------------------- |
-| `prefix` + `y` | Launch (or re-attach to) a Claude session for the current directory, in a popup |
-| `prefix` + `u` | Open the agent picker                                                           |
+| Key            | Action                                                                        |
+| -------------- | ----------------------------------------------------------------------------- |
+| `prefix` + `y` | Launch (or re-open) a Claude session for the current directory, as a tab      |
+| `prefix` + `u` | Open the agent picker                                                         |
+| `prefix` + `Y` | Spawn a named agent in its own git worktree                                   |
+| `prefix` + `b` | Close the agent tab you are on, leaving the agent running                     |
+
+> ⚠️ **`prefix` + `&` kills the agent.** An agent tab is a real tmux window, so
+> tmux's own kill-window destroys the Claude process running in it and takes the
+> agent's session with it — the worktree and branch survive on disk, but nothing
+> cleans them up and the agent disappears from the picker. Use `prefix` + `b`
+> (`unlink-window`) to close a tab, or `ctrl-x` in the picker for a real kill
+> with worktree cleanup.
 
 Inside the picker:
 
@@ -93,8 +103,9 @@ set -g @claude_command        'claude'               # command run in new sessio
 set -g @claude_args           ''                     # extra args appended to the command
 set -g @claude_session_prefix 'claude-'              # tmux session name prefix
 set -g @claude_worktree_dir   '~/.claude-worktrees'  # where to store worktrees
-set -g @claude_popup_width    '90%'                  # popup width
-set -g @claude_popup_height   '90%'                  # popup height
+set -g @claude_unlink_key     'b'                    # prefix key: close an agent tab, keep the agent
+set -g @claude_popup_width    '90%'                  # picker/prompt popup width
+set -g @claude_popup_height   '90%'                  # picker/prompt popup height
 set -g @claude_fzf_options    ''                     # extra options passed to the fzf picker
 set -g @claude_sound_enabled  'on'                   # background-agent notification sounds
 set -g @claude_sound_done     '~/.claude/sounds/terminado.mp3'  # played on busy -> idle
@@ -145,8 +156,13 @@ so tmux stores a literal `$` (in a single-quoted value, use a bare
 ## How it works
 
 - The **launcher** creates a detached `claude-<hash-of-dir>` tmux session running
-  `claude`, records the window it came from in `@claude_origin`, and attaches to
-  it in a popup.
+  `claude`, names its window after the directory, and links that window into your
+  own session as a tab.
+- **Agents live in their own sessions and only visit yours.** `link-window` makes
+  one window appear in two sessions at once — it is the same window, not a copy —
+  so an agent tab keeps running when you close it with `unlink-window`, and
+  survives your session being destroyed entirely. Opening the same agent twice
+  focuses the tab you already have rather than adding a second one.
 - **`claude agents --json`** is the source of truth for what is running and how it
   is doing. Each Claude session self-reports its state (`busy` / `waiting` /
   `idle`) to a supervisor daemon, which that command publishes. Nothing here scans
@@ -160,14 +176,12 @@ so tmux stores a literal `$` (in a single-quoted value, use a bare
 - The **age column** is the mtime of the agent's transcript — its last sign of
   life. `claude agents --json` reports only `startedAt`, never a last-activity
   time. A brand-new agent that has yet to take a turn shows `-`.
-- The **picker** renders those rows with a live `capture-pane` preview. On `enter`
-  a **dedicated** agent (in a `claude-*` session) resumes in the popup over the
-  window it was launched from, while a **loose** one (any other pane) is focused in
-  place. `ctrl-x` kills the Claude process itself: a dedicated session dies with
-  its last window, and a loose pane keeps the shell that hosted it.
-- Pressing `prefix` + `u` **from inside a session popup** detaches that popup
-  first (closing it), then reopens the picker full-size on the outer host client —
-  so you never end up with a cramped popup-in-popup.
+- The **picker** renders those rows with a live `capture-pane` preview. It is
+  itself a popup — a chooser you pass through, not somewhere you live. On `enter`
+  a **dedicated** agent (in a `claude-*` session) opens as a tab in your session,
+  while a **loose** one (any other pane) is focused in place. `ctrl-x` kills the
+  Claude process itself: a dedicated session dies with its last window, and a
+  loose pane keeps the shell that hosted it.
 
 ## Named agents & worktrees
 
@@ -200,7 +214,7 @@ When inside the picker (opened with `prefix` + `u`), these bindings work for nam
 
 | Key      | Action                     |
 | -------- | -------------------------- |
-| `ctrl-n` | Spawn a new agent, attaching to it in place |
+| `ctrl-n` | Spawn a new agent and open it as a tab |
 | `ctrl-s` | Send text to agent         |
 | `ctrl-x` | Kill agent + cleanup       |
 
@@ -214,9 +228,11 @@ running and go back to your own window:
 | `busy` → `idle`  | `@claude_sound_done`      | `claude: <name> finished`     |
 | `busy` → `waiting` | `@claude_sound_request` | `claude: <name> needs input`  |
 
-An agent is considered **focused** — and therefore silent — only when its
-session is attached *and* its pane is the active pane of the active window. An
-agent in a background window of the session you are attached to still rings.
+An agent is considered **focused** — and therefore silent — only when it is the
+active pane of the active window of an *attached* session. That can be its own
+session or, more usually, the session you opened it into as a tab: an agent tab
+you are looking at is silent, and the same tab sitting in the background still
+rings.
 tmux cannot see whether the terminal emulator itself is in the foreground, so an
 attached client behind another app still counts as focused.
 

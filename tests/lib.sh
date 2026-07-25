@@ -10,7 +10,10 @@ FAILS=0
 
 t_setup() {
   T_TMP="$(mktemp -d "${TMPDIR:-/tmp}/claude-agents-test.XXXXXX")"
-  $TMUX_CMD new-session -d -s t-keeper -c "$T_TMP" 'sleep 300'
+  # Long enough to outlive the slowest file on a loaded machine: when the
+  # keeper's sleep returns, the session goes with it and every later assertion
+  # fails as "can't find session: t-keeper" rather than on its own merits.
+  $TMUX_CMD new-session -d -s t-keeper -c "$T_TMP" 'sleep 3000'
 }
 
 t_teardown() {

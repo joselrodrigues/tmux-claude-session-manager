@@ -70,3 +70,46 @@ valid_agent_name() {
 # tmux stores user options opaquely and bash never tilde-expands variable
 # contents, so a leading ~ in @claude_worktree_dir must be expanded by hand.
 expand_tilde() { printf '%s' "${1/#\~/$HOME}"; }
+
+# open_agent <session> [client]
+# Show an agent as a tab in the client's session, and focus it.
+#
+# The agent keeps living in its own session; link-window only makes its window
+# appear in a second one, so closing the tab with unlink-window leaves it
+# running. Without <client> the target is tmux's current session, which is
+# ambiguous with more than one client attached — pass it whenever you have it.
+open_agent() {
+  local session="$1" client="${2:-}" win target
+  win="$(tmux list-windows -t "=$session" -F '#{window_id}' | head -1)"
+  [ -z "$win" ] && return 1
+  # #{client_session}, not #{session_name}: -c picks which client the message
+  # goes to, but the format is still evaluated against tmux's current session,
+  # which is whichever one was last created or used — not the one this client
+  # is looking at. Spawning an agent makes the mismatch the common case.
+  if [ -n "$client" ]; then
+    target="$(tmux display-message -p -c "$client" '#{client_session}')"
+  else
+    target="$(tmux display-message -p '#{session_name}')"
+  fi
+  [ -z "$target" ] && return 1
+
+  # link-window is not idempotent: linking a window that is already here
+  # succeeds and leaves two tabs pointing at the same window.
+  tmux list-windows -t "=$target" -F '#{window_id}' | grep -qx "$win" ||
+    tmux link-window -s "$win" -t "=$target:"
+
+  # Switch before selecting, and address the window through its session: a
+  # linked window belongs to two sessions, so a bare `-t @id` is ambiguous
+  # about whose current-window pointer moves, and a client left on the old
+  # session would not follow the selection.
+  [ -n "$client" ] && tmux switch-client -c "$client" -t "=$target"
+  tmux select-window -t "=$target:$win"
+}
+
+# name_window <session> <name>
+# Label the agent's window for the status bar. automatic-rename would
+# otherwise overwrite it with whatever command the pane is running.
+name_window() {
+  tmux rename-window -t "$1:" "$2"
+  tmux set-window-option -t "$1:" automatic-rename off
+}

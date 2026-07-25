@@ -15,9 +15,10 @@
 # state file, and exits.
 #
 # Divergence from the brief, which said "sounds for agents whose session is not
-# the attached one": an agent counts as focused only when its session is
-# attached AND it is the active pane of the active window. A background window
-# of the session you are attached to is not on your screen, so it still rings.
+# the attached one": an agent counts as focused only when it is the active pane
+# of the active window of an attached session — its own session, or any session
+# its window is linked into as a tab. A background window of the session you are
+# attached to is not on your screen, so it still rings.
 #
 #   pulse.sh install   — append the poll to status-right (idempotent)
 #   pulse.sh           — one poll; prints nothing, by design
@@ -55,6 +56,7 @@ config="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
 
 sound_done="$(expand_tilde "$(get_tmux_option @claude_sound_done "$config/sounds/terminado.mp3")")"
 sound_request="$(expand_tilde "$(get_tmux_option @claude_sound_request "$config/sounds/esperando.mp3")")"
+prefix="$(get_tmux_option @claude_session_prefix 'claude-')"
 
 state="${CLAUDE_PULSE_STATE:-${TMPDIR:-/tmp}/claude-pulse-$(id -u).state}"
 lock="$state.lock"
@@ -84,18 +86,28 @@ current="$({
     awk '{ print "P\t" $1 "\t" $2 }'
   tm list-panes -a -F $'T\t#{pane_tty}\t#{session_name}\t#{session_attached}\t#{window_active}\t#{pane_active}' 2>/dev/null
   printf '%s\n' "$agents" | sed $'s/^/A\t/'
-} | awk -F'\t' '
+} | awk -F'\t' -v prefix="$prefix" '
   $1 == "P" { tty_of[$2] = $3; next }
   $1 == "T" {
     sub(/^\/dev\//, "", $2)
-    sess[$2] = $3
-    focused[$2] = ($4 > 0 && $5 == 1 && $6 == 1) ? 1 : 0
+    # An agent opened as a tab lives in two sessions at once, so its pane comes
+    # back from list-panes twice and neither row can be trusted alone.
+    #
+    # The dedicated session is the misleading one: that window is always the
+    # only -- therefore active -- window there, and the session is never
+    # attached (a client attaches to a session, not a window). Read by itself
+    # it reports "not focused" even while you are looking straight at the tab.
+    # So focus is an OR across every session holding the pane...
+    if ($4 > 0 && $5 == 1 && $6 == 1) focused[$2] = 1
+    # ...while the session recorded is deliberately the dedicated one, since
+    # @claude_agent_name and @claude_sound_mute are set there and nowhere else.
+    if (!($2 in sess) || index($3, prefix) == 1) sess[$2] = $3
     next
   }
   $1 == "A" {
     tty = tty_of[$2]
     if (tty == "" || !(tty in sess)) next   # this Claude is not running inside tmux
-    printf "%s\t%s\t%s\t%s\n", $2, $3, sess[tty], focused[tty]
+    printf "%s\t%s\t%s\t%s\n", $2, $3, sess[tty], focused[tty] + 0
   }
 ')"
 
