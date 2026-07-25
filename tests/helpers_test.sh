@@ -4,7 +4,9 @@
 t_setup
 
 assert_ok   valid_agent_name api
-assert_ok   valid_agent_name a1._x-2
+assert_ok   valid_agent_name a1_x-2
+assert_fail valid_agent_name a1._x-2
+assert_fail valid_agent_name 'my.agent'
 assert_fail valid_agent_name ''
 assert_fail valid_agent_name -x
 assert_fail valid_agent_name .hidden

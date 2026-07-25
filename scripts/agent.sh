@@ -137,6 +137,7 @@ send)
   sent=''
   while IFS= read -r s; do
     pane="$(pane_for_target "$target" "$s")"
+    [ -z "$pane" ] && die "cannot resolve pane for $s"
     tm send-keys -t "$pane" -l -- "$text"
     [ "$enter" = yes ] && tm send-keys -t "$pane" Enter
     sent="${sent:+$sent }$s"
@@ -162,6 +163,7 @@ read)
   done
   s="$(resolve_sessions "$target" | head -1)" || exit $?
   pane="$(pane_for_target "$target" "$s")"
+  [ -z "$pane" ] && die "cannot resolve pane for $s"
   cap=(tm capture-pane -p -t "$pane")
   [ "$source" = recent ] && cap+=(-S "-${lines:-1000}")
   out="$("${cap[@]}")"
@@ -250,7 +252,11 @@ kill)
   sigfile=''
   [ -n "$wt" ] && sigfile="$(signals_file "$s")"
   pane="$(pane_for_target "$target" "$s")"
+  # An empty pane or pid MUST abort: `-t ""` falls back to tmux's notion of
+  # the current pane, and the kill below would land on an innocent process.
+  [ -z "$pane" ] && die "cannot resolve pane for $s"
   pid="$(tm display-message -p -t "$pane" '#{pane_pid}')"
+  [ -z "$pid" ] && die "cannot resolve pid for $s"
 
   # TERM, then wait for real death before touching the worktree — a dying
   # Claude can still flush writes that would corrupt the clean-check.

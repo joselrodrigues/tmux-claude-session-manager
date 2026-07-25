@@ -48,4 +48,10 @@ $TMUX_CMD kill-session -t '=claude-alpha-api'
 assert_ok spawn api "$repo"
 assert_eq "$(git -C "$WT_BASE/alpha-$hash8/api" branch --show-current)" api branch-reused
 
+# dotted repo name: dots are deleted from the session name — tmux parses `.`
+# in -t targets as window.pane, so `claude-.dotrepo-x` would be unaddressable
+dotrepo="$(t_repo .dotrepo)"
+assert_ok spawn dotty "$dotrepo"
+assert_ok $TMUX_CMD has-session -t '=claude-dotrepo-dotty'
+
 t_teardown

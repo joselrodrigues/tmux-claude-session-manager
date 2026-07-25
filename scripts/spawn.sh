@@ -42,7 +42,10 @@ path="${path:-$PWD}"
 valid_agent_name "$name" || die "invalid agent name '${name:-<empty>}'"
 repo_root="$(git -C "$path" rev-parse --show-toplevel 2>/dev/null)" ||
   die "$path is not inside a git repo"
-repo="$(basename "$repo_root" | tr -cd 'A-Za-z0-9._-')"
+# Dots deleted, not kept: tmux parses `.` in -t targets as window.pane, so a
+# dotted session name (repo `.dotfiles` -> `claude-.dotfiles-x`) is unaddressable.
+repo="$(basename "$repo_root" | tr -cd 'A-Za-z0-9_-')"
+[ -z "$repo" ] && die "cannot derive a session name from $repo_root"
 
 prefix="$(get_tmux_option @claude_session_prefix 'claude-')"
 session="${prefix}${repo}-${name}"
@@ -60,8 +63,12 @@ if [ ! -d "$wt_dir" ]; then
   else
     err="$(git -C "$repo_root" worktree add -b "$name" "$wt_dir" 2>&1)" || die "$err"
   fi
-  [ -f "$wt_dir/.gitmodules" ] &&
-    git -C "$wt_dir" submodule update --init --recursive >/dev/null 2>&1
+  # Output stays visible: a first init clones every submodule from scratch,
+  # which can take minutes — silenced, the popup looks frozen mid-spawn.
+  if [ -f "$wt_dir/.gitmodules" ]; then
+    echo "initializing submodules (first time can take a while)..."
+    git -C "$wt_dir" submodule update --init --recursive
+  fi
 fi
 
 cmd="$(get_tmux_option @claude_command 'claude')"

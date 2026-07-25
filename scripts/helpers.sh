@@ -58,12 +58,14 @@ claude_transcript_mtime() {
 
 # valid_agent_name <name>
 # Charset for session names AND git branch names: rejects git-ref invalids
-# (.., trailing dot, .lock suffix) and anything argv/tmux-unsafe.
+# and anything argv/tmux-unsafe. Dots are forbidden outright — tmux parses
+# `.` in a -t target as the window.pane separator, so a dotted session name
+# becomes unaddressable (and a kill can land on the wrong pane).
 valid_agent_name() {
   case "$1" in
   '' | *..* | *.lock | *.) return 1 ;;
   esac
-  printf '%s' "$1" | grep -qE '^[A-Za-z0-9][A-Za-z0-9._-]*$'
+  printf '%s' "$1" | grep -qE '^[A-Za-z0-9][A-Za-z0-9_-]*$'
 }
 
 # expand_tilde <path>
