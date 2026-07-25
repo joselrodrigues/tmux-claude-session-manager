@@ -10,7 +10,7 @@
 # is what lets several Claudes in one project (same cwd, same session, different
 # windows) each get a row of their own.
 #
-#   Row: rank \t pane_id \t pid \t kind \t icon \t age \t loc \t path
+#   Row: rank \t pane_id \t pid \t kind \t icon \t age \t loc \t path \t branch \t task
 #   rank/pane_id/pid/kind are hidden from the display via fzf's --with-nth.
 set -uo pipefail
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -54,10 +54,22 @@ done)"
     path = $5
     if (index(path, home) == 1) path = "~" substr(path, length(home) + 1)
 
-    printf "%s\t%s\t%s\t%s\t%s\t%5s\t%s\t%s\n",
-      rank, pane[tty], $2, kind, icon, age, loc[tty], path
+    printf "%s\t%s\t%s\t%s\t%s\t%5s\t%s\t%s\t%s\n",
+      rank, pane[tty], $2, kind, icon, age, loc[tty], path, $5
   }
-' | sort -t$'\t' -k1,1n -k6,6n
+' | sort -t$'\t' -k1,1n -k6,6n | while IFS=$'\t' read -r rank pane pid kind icon age loc path cwd; do
+  branch="$(git -C "$cwd" branch --show-current 2>/dev/null)"
+  if [ -n "$branch" ]; then
+    [ -n "$(git -C "$cwd" status --porcelain --untracked-files=no 2>/dev/null | head -1)" ] &&
+      branch="$branch*"
+  else
+    branch='-'
+  fi
+  sess="$(tmux display-message -p -t "$pane" '#{session_name}' 2>/dev/null)"
+  task="$(tmux show-option -t "$sess" -qv @claude_task 2>/dev/null)"
+  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+    "$rank" "$pane" "$pid" "$kind" "$icon" "$age" "$loc" "$path" "$branch" "${task:--}"
+done
 # rank asc (what needs you floats up), then age asc so whatever just went idle
 # sits at the top of its group. -k6,6n reads the leading number of the age field
 # ("5m" -> 5; "-" -> 0).

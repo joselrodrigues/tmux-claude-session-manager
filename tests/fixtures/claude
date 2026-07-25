@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+# Mock `claude agents --json`: emits one interactive agent whose pid/status
+# come from env (CLAUDE_MOCK_PID / CLAUDE_MOCK_STATUS).
+[ "$1 $2" = 'agents --json' ] || exit 1
+printf '[{"kind":"interactive","pid":%s,"status":"%s","sessionId":"mock","cwd":"/tmp"}]\n' \
+  "${CLAUDE_MOCK_PID:-0}" "${CLAUDE_MOCK_STATUS:-idle}"

@@ -86,14 +86,19 @@ as does a Claude you started by hand in an ordinary pane.
 Set any of these before the plugin loads (defaults shown):
 
 ```tmux
-set -g @claude_launch_key     'y'        # prefix key: launch/open for current dir
-set -g @claude_list_key       'u'        # prefix key: open the picker
-set -g @claude_command        'claude'   # command run in new sessions
-set -g @claude_args           ''         # extra args appended to the command
-set -g @claude_session_prefix 'claude-'  # tmux session name prefix
-set -g @claude_popup_width     '90%'     # popup width
-set -g @claude_popup_height    '90%'     # popup height
-set -g @claude_fzf_options    ''         # extra options passed to the fzf picker
+set -g @claude_launch_key     'y'                    # prefix key: launch/open for current dir
+set -g @claude_list_key       'u'                    # prefix key: open the picker
+set -g @claude_spawn_key      'Y'                    # prefix key: spawn named agent
+set -g @claude_command        'claude'               # command run in new sessions
+set -g @claude_args           ''                     # extra args appended to the command
+set -g @claude_session_prefix 'claude-'              # tmux session name prefix
+set -g @claude_worktree_dir   '~/.claude-worktrees'  # where to store worktrees
+set -g @claude_popup_width    '90%'                  # popup width
+set -g @claude_popup_height   '90%'                  # popup height
+set -g @claude_fzf_options    ''                     # extra options passed to the fzf picker
+set -g @claude_sound_enabled  'on'                   # background-agent notification sounds
+set -g @claude_sound_done     '~/.claude/sounds/terminado.mp3'  # played on busy -> idle
+set -g @claude_sound_request  '~/.claude/sounds/esperando.mp3'  # played on busy -> waiting
 ```
 
 For example, to skip permission prompts in launched sessions:
@@ -163,6 +168,82 @@ so tmux stores a literal `$` (in a single-quoted value, use a bare
 - Pressing `prefix` + `u` **from inside a session popup** detaches that popup
   first (closing it), then reopens the picker full-size on the outer host client —
   so you never end up with a cramped popup-in-popup.
+
+## Named agents & worktrees
+
+Named agents let a coordinator Claude (or any script) orchestrate the fleet
+without attaching. Launch with `prefix` + `Y` from any directory, then send
+tasks and wait for completion via CLI.
+
+### Spawn and control
+
+| Command | Action |
+| ------- | ------ |
+| `spawn.sh [name] [repo] ["task"]` | Launch a named agent for `<repo>` with the given task; prints the session name on stdout. `name` is optional — empty auto-generates `agentN` (names cannot contain dots). Reuses worktree if name exists in that repo. `--no-popup` is accepted for CLI compatibility but is a no-op. |
+| `agent.sh send <name\|@target> '<message>'` | Send text to an agent or group target. |
+| `agent.sh read <name> [--lines N]` | Print agent's pane output. |
+| `agent.sh wait <name> [--status <waiting\|idle\|busy>] [--match <text> [--regex]] [--signal <done\|blocked>] [--timeout SEC] [--json]` | Block until status matches, text appears, or signal is sent. |
+| `agent.sh signal <name> <done\|blocked> [--body "<summary>"]` | Send a completion signal. |
+| `agent.sh kill <name>` | Kill the agent; clean worktree removed, dirty preserved; branch always survives. |
+
+### Group targets
+
+Send to multiple agents with `@all`, `@idle`, `@waiting`, or `@busy`:
+
+```bash
+agent.sh send @idle 'pick up the next task from TODO.md'
+```
+
+### Picker bindings
+
+When inside the picker (opened with `prefix` + `u`), these bindings work for named agents:
+
+| Key      | Action                     |
+| -------- | -------------------------- |
+| `ctrl-n` | Spawn a new agent, attaching to it in place |
+| `ctrl-s` | Send text to agent         |
+| `ctrl-x` | Kill agent + cleanup       |
+
+### Notifications
+
+Agents you are not looking at ring when they change state, so you can leave them
+running and go back to your own window:
+
+| Transition       | Sound                     | Message                       |
+| ---------------- | ------------------------- | ----------------------------- |
+| `busy` → `idle`  | `@claude_sound_done`      | `claude: <name> finished`     |
+| `busy` → `waiting` | `@claude_sound_request` | `claude: <name> needs input`  |
+
+An agent is considered **focused** — and therefore silent — only when its
+session is attached *and* its pane is the active pane of the active window. An
+agent in a background window of the session you are attached to still rings.
+tmux cannot see whether the terminal emulator itself is in the foreground, so an
+attached client behind another app still counts as focused.
+
+Mute one agent without silencing the rest:
+
+```bash
+tmux set-option -t claude-myrepo-api @claude_sound_mute on
+```
+
+`~/.claude/mute` (the file `cmute`/`cunmute` toggle) silences everything, and
+`set -g @claude_sound_enabled off` disables the feature at the next poll — no
+tmux restart needed.
+
+The poll rides the tmux status line: `pulse.sh` appends a `#()` to
+`status-right` at load and on every `client-attached`, which means the status
+line must be on (`set -g status on`) and `status-interval` decides the latency —
+with the default `15` a notification can lag up to 15 seconds. Each poll is one
+short-lived process; there is no daemon.
+
+The default sound paths point at `~/.claude/sounds/*.mp3`, the same files the
+Claude Code notification hook uses. Nothing plays if they are missing — point
+the options at your own files if you keep them elsewhere.
+
+### Full workflow
+
+See [docs/orchestration.md](docs/orchestration.md) for a complete example,
+including how to handle all three terminal states (`done`, `blocked`, `waiting`).
 
 ## License
 

@@ -32,20 +32,26 @@ extra_opts=()
 fzf_options="$(get_tmux_option @claude_fzf_options '')"
 [ -n "$fzf_options" ] && eval "extra_opts=($fzf_options)"
 
-# ctrl-x kills the Claude process itself: a dedicated session dies with its last
-# window, while a loose pane keeps the shell that hosted it. The reload waits a
-# beat so the supervisor has dropped the agent from `claude agents --json`.
-sel=$("$DIR/agents.sh" | fzf --ansi --delimiter='\t' --with-nth=5,6,7,8 \
-  --reverse --cycle --header='Claude agents · enter: jump · ctrl-x: kill' \
+parent=$(tmux show-options -gqv @claude_parent 2>/dev/null)
+spawn_dir="$(tmux display-message -p -t "${parent:-}" '#{pane_current_path}' 2>/dev/null || pwd)"
+
+# ctrl-x routes through agent.sh kill (worktree cleanup) with the pane id;
+# ctrl-s prompts on the picker's own tty and sends without attaching;
+# ctrl-n swaps this popup's process for the spawn prompt, which attaches to
+# the new agent in place once it's spawned.
+sel=$("$DIR/agents.sh" | fzf --ansi --delimiter='\t' --with-nth=5.. \
+  --reverse --cycle \
+  --header='Claude agents · enter: jump · ctrl-n: new · ctrl-s: send · ctrl-x: kill' \
   --preview='tmux capture-pane -ept {2}' --preview-window='up,70%,follow' \
-  --bind="ctrl-x:execute-silent(kill {3})+reload(sleep 0.3; $self --list)" \
+  --bind="ctrl-x:execute-silent($DIR/agent.sh kill {2} || kill {3})+reload(sleep 0.3; $self --list)" \
+  --bind="ctrl-s:execute(printf 'send> '; IFS= read -r p; [ -n \"\$p\" ] && $DIR/agent.sh send {2} \"\$p\")+reload(sleep 0.3; $self --list)" \
+  --bind="ctrl-n:become($DIR/spawn-prompt.sh $(printf '%q' "$spawn_dir"))" \
   ${extra_opts[@]+"${extra_opts[@]}"})
 
 [ -z "$sel" ] && exit 0
 pane=$(printf '%s' "$sel" | cut -f2)
 kind=$(printf '%s' "$sel" | cut -f4)
 
-parent=$(tmux show-options -gqv @claude_parent 2>/dev/null)
 session=$(tmux display-message -p -t "$pane" '#{session_name}' 2>/dev/null)
 
 if [ "$kind" = loose ]; then

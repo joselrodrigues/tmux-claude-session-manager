@@ -55,3 +55,18 @@ claude_transcript_mtime() {
     }
   done
 }
+
+# valid_agent_name <name>
+# Charset for session names AND git branch names: rejects git-ref invalids
+# and anything argv/tmux-unsafe. Dots are forbidden outright (not just the
+# git-ref special cases like *.lock or *..*) — tmux parses `.` in a -t target
+# as the window.pane separator, so a dotted session name becomes
+# unaddressable (and a kill can land on the wrong pane).
+valid_agent_name() {
+  printf '%s' "$1" | grep -qE '^[A-Za-z0-9][A-Za-z0-9_-]*$'
+}
+
+# expand_tilde <path>
+# tmux stores user options opaquely and bash never tilde-expands variable
+# contents, so a leading ~ in @claude_worktree_dir must be expanded by hand.
+expand_tilde() { printf '%s' "${1/#\~/$HOME}"; }
