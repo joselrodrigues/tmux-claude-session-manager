@@ -54,4 +54,10 @@ dotrepo="$(t_repo .dotrepo)"
 assert_ok spawn dotty "$dotrepo"
 assert_ok $TMUX_CMD has-session -t '=claude-dotrepo-dotty'
 
+# empty name auto-generates agentN (herdr semantics), skipping taken slots
+assert_ok spawn '' "$dotrepo"
+assert_ok $TMUX_CMD has-session -t '=claude-dotrepo-agent1'
+assert_ok spawn '' "$dotrepo"
+assert_ok $TMUX_CMD has-session -t '=claude-dotrepo-agent2'
+
 t_teardown

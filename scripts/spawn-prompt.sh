@@ -14,9 +14,8 @@ if [ "$window" = --no-popup ]; then
   extra=(--no-popup)
 fi
 
-printf 'agent name: '
+printf 'agent name (empty = auto): '
 IFS= read -r name
-[ -z "$name" ] && exit 0
 printf 'task (optional): '
 IFS= read -r task
 

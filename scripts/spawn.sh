@@ -23,23 +23,26 @@ die() {
   exit 1
 }
 
-name='' path='' task='' window=''
+name='' path='' task='' window='' pos=0
 while [ $# -gt 0 ]; do
   case "$1" in
   --no-popup) : ;;
   --window) window="${2:-}"; shift ;;
   *)
-    if [ -z "$name" ]; then name="$1"
-    elif [ -z "$path" ]; then path="$1"
-    elif [ -z "$task" ]; then task="$1"
-    fi
+    # Positional by index, not by first-empty-slot: an empty name argument
+    # (auto-name request) must not swallow the path into its slot.
+    pos=$((pos + 1))
+    case "$pos" in
+    1) name="$1" ;;
+    2) path="$1" ;;
+    3) task="$1" ;;
+    esac
     ;;
   esac
   shift
 done
 path="${path:-$PWD}"
 
-valid_agent_name "$name" || die "invalid agent name '${name:-<empty>}'"
 repo_root="$(git -C "$path" rev-parse --show-toplevel 2>/dev/null)" ||
   die "$path is not inside a git repo"
 # Dots deleted, not kept: tmux parses `.` in -t targets as window.pane, so a
@@ -48,6 +51,18 @@ repo="$(basename "$repo_root" | tr -cd 'A-Za-z0-9_-')"
 [ -z "$repo" ] && die "cannot derive a session name from $repo_root"
 
 prefix="$(get_tmux_option @claude_session_prefix 'claude-')"
+
+# Empty name -> auto-generate (herdr semantics: the branch name is optional):
+# first agentN whose session and branch are both free.
+if [ -z "$name" ]; then
+  i=1
+  while tm has-session -t "=${prefix}${repo}-agent$i" 2>/dev/null ||
+    git -C "$repo_root" show-ref --verify --quiet "refs/heads/agent$i"; do
+    i=$((i + 1))
+  done
+  name="agent$i"
+fi
+valid_agent_name "$name" || die "invalid agent name '$name'"
 session="${prefix}${repo}-${name}"
 tm has-session -t "=$session" 2>/dev/null &&
   die "agent '$name' already running for $repo ($session)"
