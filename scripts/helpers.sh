@@ -71,16 +71,22 @@ valid_agent_name() {
 # contents, so a leading ~ in @claude_worktree_dir must be expanded by hand.
 expand_tilde() { printf '%s' "${1/#\~/$HOME}"; }
 
-# open_agent <session> [client]
+# open_agent <session-or-window-id> [client]
 # Show an agent as a tab in the client's session, and focus it.
 #
 # The agent keeps living in its own session; link-window only makes its window
 # appear in a second one, so closing the tab with unlink-window leaves it
 # running. Without <client> the target is tmux's current session, which is
 # ambiguous with more than one client attached — pass it whenever you have it.
+# A @window-id argument is used as-is: once a window is linked into two
+# sessions, resolving "which session does this pane belong to" is ambiguous,
+# but the window id names the one shared window object unambiguously.
 open_agent() {
   local session="$1" client="${2:-}" win target
-  win="$(tmux list-windows -t "=$session" -F '#{window_id}' | head -1)"
+  case "$session" in
+  @*) win="$session" ;;
+  *) win="$(tmux list-windows -t "=$session" -F '#{window_id}' | head -1)" ;;
+  esac
   [ -z "$win" ] && return 1
   # #{client_session}, not #{session_name}: -c picks which client the message
   # goes to, but the format is still evaluated against tmux's current session,

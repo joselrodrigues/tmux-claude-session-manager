@@ -71,5 +71,9 @@ if [ "$kind" != dedicated ]; then
 fi
 
 # Dedicated agent: show it as a tab in the parent client's session and focus
-# it. This popup closes on its own when the script exits.
-open_agent "$session" "$parent"
+# it. Addressed by window id, not session — once the window is linked into the
+# user's session, the pane's session name is ambiguous and can resolve to the
+# user's side, which would select the wrong window entirely. This popup closes
+# on its own when the script exits.
+win=$(tmux display-message -p -t "$pane" '#{window_id}' 2>/dev/null)
+open_agent "${win:-$session}" "$parent"
