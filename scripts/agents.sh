@@ -38,7 +38,18 @@ mtimes="$(printf '%s\n' "$rows" | awk -F'\t' '$5 == "" { print $3 }' |
 } | awk -F'\t' -v now="$(date +%s)" -v home="$HOME" \
   -v prefix="$(get_tmux_option @claude_session_prefix 'claude-')" '
   $1 == "P" { tty_of[$2] = $3; next }
-  $1 == "T" { sub(/^\/dev\//, "", $2); pane[$2] = $3; sess[$2] = $4; loc[$2] = $5; next }
+  $1 == "T" {
+    sub(/^\/dev\//, "", $2)
+    pane[$2] = $3
+    # An agent opened as a tab lives in two sessions at once, so list-panes -a
+    # walks its pane twice and last-one-wins keeps whichever session sorts
+    # later -- usually the one you linked it into, which read the agent as
+    # loose and lost the task stamped on its own session. Same two-rows trap
+    # pulse.sh documents; the dedicated session is the one describing the agent.
+    # (No apostrophes in here: the awk program is single-quoted.)
+    if (!($2 in sess) || index($4, prefix) == 1) { sess[$2] = $4; loc[$2] = $5 }
+    next
+  }
   $1 == "M" { seen_at[$2] = $3; next }
   $1 == "A" {
     tty = tty_of[$2]
@@ -56,10 +67,10 @@ mtimes="$(printf '%s\n' "$rows" | awk -F'\t' '$5 == "" { print $3 }' |
     path = $5
     if (index(path, home) == 1) path = "~" substr(path, length(home) + 1)
 
-    printf "%s\t%s\t%s\t%s\t%s\t%5s\t%s\t%s\t%s\n",
-      rank, pane[tty], $2, kind, icon, age, loc[tty], path, $5
+    printf "%s\t%s\t%s\t%s\t%s\t%5s\t%s\t%s\t%s\t%s\n",
+      rank, pane[tty], $2, kind, icon, age, loc[tty], path, $5, sess[tty]
   }
-' | sort -t$'\t' -k1,1n -k6,6n | while IFS=$'\t' read -r rank pane pid kind icon age loc path cwd; do
+' | sort -t$'\t' -k1,1n -k6,6n | while IFS=$'\t' read -r rank pane pid kind icon age loc path cwd sess; do
   branch="$(git -C "$cwd" branch --show-current 2>/dev/null)"
   if [ -n "$branch" ]; then
     [ -n "$(git -C "$cwd" status --porcelain --untracked-files=no 2>/dev/null | head -1)" ] &&
@@ -67,7 +78,11 @@ mtimes="$(printf '%s\n' "$rows" | awk -F'\t' '$5 == "" { print $3 }' |
   else
     branch='-'
   fi
-  sess="$(tmux display-message -p -t "$pane" '#{session_name}' 2>/dev/null)"
+  # $sess comes from awk, not from `display-message -t $pane`: a linked pane
+  # belongs to two sessions, so asking tmux which one it is in answers with
+  # whichever it likes — and for a tab agent that is the user's session, which
+  # carries none of the agent's stamps.
+  #
   # A split agent lives in an ordinary session and is stamped on its pane, so
   # the awk above — which knows only session names — can only have called it
   # loose. Pane options do not inherit, so this asks the pane itself.
