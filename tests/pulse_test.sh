@@ -61,6 +61,25 @@ $TMUX_CMD set-option -g status-right ''
 # display-message defaults to 750ms; hold it long enough to capture.
 $TMUX_CMD set-option -g display-time 5000
 
+# Primary source: the session files each Claude publishes. The same busy ->
+# idle edge, with `claude agents --json` out of the picture entirely.
+t_session "$pid" busy
+poll
+assert_eq "$(sounds)" '' 'first sighting is silent (session files)'
+t_session "$pid" idle
+poll
+case "$(sounds_within)" in
+*terminado.mp3*) : ;;
+*) _fail "session-file busy->idle played no done sound: $(sounds)" ;;
+esac
+
+# Everything below runs on the `claude agents --json` fallback: no session
+# files, and the mock in tests/fixtures answering instead. Wiping the remembered
+# statuses is what keeps the "first sighting" assertion honest.
+reset_sounds
+t_no_sessions
+rm -f "$CLAUDE_PULSE_STATE"
+
 # first sighting has no previous status: nothing to announce
 export CLAUDE_MOCK_STATUS=busy
 poll

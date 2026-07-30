@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # Emit one picker row per running Claude that lives in a tmux pane.
 #
-# Claude self-reports its status: each session writes its own state to disk and a
-# supervisor daemon aggregates it, which `claude agents --json` publishes. So this
-# needs no Claude Code hooks, and no `pane_current_command` scan — on macOS a pane
-# reports its parent shell there, never the `claude` child running inside it.
+# Claude self-reports its status: each session writes its own state to disk, which
+# claude_agents_tsv reads. So this needs no Claude Code hooks, and no
+# `pane_current_command` scan — on macOS a pane reports its parent shell there,
+# never the `claude` child running inside it.
 #
 # Identity is the Claude process, not the tmux session. Joining pid -> tty -> pane
 # is what lets several Claudes in one project (same cwd, same session, different
@@ -17,15 +17,16 @@ DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=helpers.sh
 . "$DIR/helpers.sh"
 
-agents="$(claude agents --json 2>/dev/null)" || exit 0
-rows="$(printf '%s' "$agents" |
-  jq -r '.[] | select(.kind == "interactive") | [.pid, .status, .sessionId, .cwd] | @tsv' 2>/dev/null)"
+rows="$(claude_agents_tsv)"
 [ -n "$rows" ] || exit 0
 
-# Resolved out here because only `stat`, outside awk, can read an mtime.
-mtimes="$(printf '%s\n' "$rows" | cut -f3 | while IFS= read -r sid; do
-  printf 'M\t%s\t%s\n' "$sid" "$(claude_transcript_mtime "$sid")"
-done)"
+# The session files carry a last-activity time of their own, so only the CLI
+# fallback — which does not — costs a stat per row. Resolved out here because
+# only `stat`, outside awk, can read an mtime.
+mtimes="$(printf '%s\n' "$rows" | awk -F'\t' '$5 == "" { print $3 }' |
+  while IFS= read -r sid; do
+    printf 'M\t%s\t%s\n' "$sid" "$(claude_transcript_mtime "$sid")"
+  done)"
 
 # Three tagged streams into one awk: pid->tty, tty->pane, session->last-activity.
 # Total cost is 3 subprocesses regardless of how many sessions or panes exist.
@@ -48,7 +49,8 @@ done)"
     else if ($3 == "busy")    { icon = "\033[31m●\033[0m working"; rank = 3 }  # red    - busy, leave it
     else                      { icon = "\033[90m●\033[0m   ?    "; rank = 2 }  # grey   - unrecognised status
 
-    age = (seen_at[$4] != "") ? int((now - seen_at[$4]) / 60) "m" : "-"
+    at = ($6 != "") ? $6 : seen_at[$4]
+    age = (at != "") ? int((now - at) / 60) "m" : "-"
     kind = (index(sess[tty], prefix) == 1) ? "dedicated" : "loose"
 
     path = $5

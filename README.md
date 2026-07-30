@@ -13,7 +13,8 @@ each one. This plugin gives you:
 - 🔢 **A central picker** (`prefix` + `u`) listing every running Claude agent —
   several in one project, and any running loose in an ordinary pane.
 - 🟢 **Live status** per agent — `working` / `waiting` / `idle` — read straight
-  from `claude agents --json`, so you instantly see which need you. No setup.
+  from what each Claude publishes about itself, so you instantly see which need
+  you. No setup.
 - 👁️ **A live preview** of each agent's screen right in the picker.
 - 🎯 **Smart jump** — selecting an agent opens it as a window (tab) of your own
   session. Close the tab and the agent keeps running.
@@ -28,9 +29,9 @@ the picker reads it — there are no hooks to install.
 
 - **tmux ≥ 3.2** (for `display-popup`)
 - **[fzf](https://github.com/junegunn/fzf)** — the picker UI
-- **[jq](https://jqlang.org/)** — parses `claude agents --json`
-- **[Claude Code](https://claude.com/claude-code)** ≥ 2.1.139 — for the
-  `claude agents` command (`claude --version` to check)
+- **[jq](https://jqlang.org/)** — parses the agent state files
+- **[Claude Code](https://claude.com/claude-code)** ≥ 2.1.139 — for published
+  agent status (`claude --version` to check)
 - bash; macOS or Linux
 
 ## Install (tpm)
@@ -175,19 +176,28 @@ so tmux stores a literal `$` (in a single-quoted value, use a bare
   `ctrl-x` in the picker still kills it with the usual worktree cleanup.
   Everything that identifies a tab agent — its worktree, name and task — is
   stamped on the pane instead of on a session.
-- **`claude agents --json`** is the source of truth for what is running and how it
-  is doing. Each Claude session self-reports its state (`busy` / `waiting` /
-  `idle`) to a supervisor daemon, which that command publishes. Nothing here scans
-  processes for a `claude` command name — on macOS a pane reports its parent shell,
-  never the `claude` child running inside it.
+- **Each Claude's own state file** is the source of truth for what is running
+  and how it is doing. A running session writes `~/.claude/sessions/<pid>.json`
+  (honouring `CLAUDE_CONFIG_DIR`) with its state — `busy` / `waiting` / `idle` —
+  and the scripts read those files with one `jq`. Nothing here scans processes
+  for a `claude` command name — on macOS a pane reports its parent shell, never
+  the `claude` child running inside it.
+- **`claude agents --json` is the fallback**, used only when no state files
+  exist, so status still needs no setup on machines that do not write them. It
+  publishes the same data, but starting the CLI costs a quarter-second idle and
+  seconds on a loaded machine — paid on every picker render, every
+  `agent.sh wait` tick and every notification poll. Reading the files is ~10ms,
+  which is the difference between a picker that opens and one that looks dead.
 - **`agents.sh`** pairs each running Claude with the tmux pane it occupies by
   joining `pid` → `tty` → pane. That join is why identity is the Claude _process_
   rather than the tmux session, and therefore why several agents in one project
   each get their own row. It costs three subprocesses per render, whatever the
   number of sessions or panes.
-- The **age column** is the mtime of the agent's transcript — its last sign of
-  life. `claude agents --json` reports only `startedAt`, never a last-activity
-  time. A brand-new agent that has yet to take a turn shows `-`.
+- The **age column** is how long ago the agent last changed state, from the
+  `statusUpdatedAt` in its state file. On the `claude agents --json` fallback —
+  which reports only `startedAt`, never a last-activity time — it falls back to
+  the mtime of the agent's transcript. Either way a brand-new agent that has yet
+  to take a turn shows `-`.
 - The **picker** renders those rows with a live `capture-pane` preview. It is
   itself a popup — a chooser you pass through, not somewhere you live. On `enter`
   a **dedicated** agent (in a `claude-*` session) opens as a tab in your session,

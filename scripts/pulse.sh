@@ -73,11 +73,10 @@ find "$lock" -maxdepth 0 -mmin +1 -exec rmdir {} \; 2>/dev/null
 mkdir "$lock" 2>/dev/null || exit 0
 trap 'rmdir "$lock" 2>/dev/null' EXIT
 
-agents="$(claude agents --json 2>/dev/null |
-  jq -r '.[] | select(.kind == "interactive") | [.pid, .status] | @tsv' 2>/dev/null)"
+agents="$(claude_agents_tsv | cut -f1,2)"
 
 # Nothing to diff, and leaving the state file untouched is what makes a single
-# failed `claude agents --json` harmless: were it rewritten empty, every pending
+# failed read harmless: were it rewritten empty, every pending
 # busy would be forgotten and the busy -> idle edge — the whole point of this
 # script — would never be seen.
 [ -n "$agents" ] || exit 0

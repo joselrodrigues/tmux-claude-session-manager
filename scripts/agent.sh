@@ -130,10 +130,11 @@ signals_file() {
   printf '%s/.%s.signals' "$(dirname "$wt")" "$(basename "$wt")"
 }
 
-# status_of <session> — waiting|idle|busy from `claude agents --json`,
-# joined by tty: the pane's tty must equal the agent pid's tty (agents.sh
-# uses the same identity rule). Empty when the supervisor doesn't know the
-# agent (yet) — callers treat that as "keep waiting".
+# status_of <session> — waiting|idle|busy from claude_agents_tsv, joined by
+# tty: the pane's tty must equal the agent pid's tty (agents.sh uses the same
+# identity rule). Empty when Claude has not published the agent (yet) —
+# callers treat that as "keep waiting". `wait --status` calls this once a
+# second, which is why it must not pay the `claude` CLI's start-up.
 status_of() {
   local tty pid st pane
   pane="$(pane_of "$1")"
@@ -144,8 +145,7 @@ status_of() {
     [ "$(ps -o tty= -p "$pid" 2>/dev/null | tr -d ' ')" = "$tty" ] &&
       { printf '%s' "$st"; return 0; }
   done <<EOF
-$(claude agents --json 2>/dev/null |
-  jq -r '.[] | select(.kind == "interactive") | [.pid, .status] | @tsv' 2>/dev/null)
+$(claude_agents_tsv | cut -f1,2)
 EOF
   return 0
 }

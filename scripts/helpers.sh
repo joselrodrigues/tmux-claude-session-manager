@@ -56,6 +56,49 @@ claude_transcript_mtime() {
   done
 }
 
+# claude_agents_tsv
+# One line per running interactive Claude:
+#   pid \t status \t sessionId \t cwd \t last-activity-epoch
+#
+# Each Claude writes its own state to $CLAUDE_CONFIG_DIR/sessions/<pid>.json,
+# and that is the same data `claude agents --json` publishes — minus the CLI's
+# start-up cost, which on a loaded machine is seconds. The picker pays it per
+# render, `wait` per poll tick and pulse.sh every status-interval forever, so
+# reading the files directly is the difference between a picker that opens and
+# one that looks dead. The CLI stays as the fallback for machines where the
+# files are absent, which keeps status working with no setup.
+#
+# Status is normalised to the CLI's three-word vocabulary: the files also carry
+# raw states like `shell`, which the CLI reports as busy and which callers here
+# only understand as "working".
+#
+# The last field is empty on the fallback path — `claude agents --json` reports
+# only `startedAt`, never a last-activity time.
+#
+# ponytail: a torn write while jq reads drops that agent for one tick. It
+# self-corrects on the next one, except in pulse.sh, where the state file is
+# rewritten from this output — so a pid missing for a tick forgets its pending
+# `busy` and loses the busy -> idle edge. Narrow enough to live with; per-file
+# jq invocations if it ever bites.
+claude_agents_tsv() {
+  local out
+  out="$(jq -r '
+    select(.kind == "interactive")
+    | [ .pid,
+        (if .status == "idle" or .status == "waiting" then .status else "busy" end),
+        .sessionId,
+        .cwd,
+        (if .statusUpdatedAt then (.statusUpdatedAt / 1000 | floor) else "" end) ]
+    | @tsv' "${CLAUDE_CONFIG_DIR:-$HOME/.claude}"/sessions/*.json 2>/dev/null)"
+  [ -n "$out" ] && {
+    printf '%s\n' "$out"
+    return 0
+  }
+  claude agents --json 2>/dev/null |
+    jq -r '.[] | select(.kind == "interactive")
+      | [.pid, .status, .sessionId, .cwd, ""] | @tsv' 2>/dev/null
+}
+
 # valid_agent_name <name>
 # Charset for session names AND git branch names: rejects git-ref invalids
 # and anything argv/tmux-unsafe. Dots are forbidden outright (not just the
