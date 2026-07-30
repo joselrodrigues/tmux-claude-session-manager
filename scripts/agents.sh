@@ -66,7 +66,15 @@ done)"
     branch='-'
   fi
   sess="$(tmux display-message -p -t "$pane" '#{session_name}' 2>/dev/null)"
-  task="$(tmux show-option -t "$sess" -qv @claude_task 2>/dev/null)"
+  # A split agent lives in an ordinary session and is stamped on its pane, so
+  # the awk above — which knows only session names — can only have called it
+  # loose. Pane options do not inherit, so this asks the pane itself.
+  if [ -n "$(tmux show-option -p -t "$pane" -qv @claude_worktree 2>/dev/null)" ]; then
+    kind='split'
+    task="$(tmux show-option -p -t "$pane" -qv @claude_task 2>/dev/null)"
+  else
+    task="$(tmux show-option -t "$sess" -qv @claude_task 2>/dev/null)"
+  fi
   printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
     "$rank" "$pane" "$pid" "$kind" "$icon" "$age" "$loc" "$path" "$branch" "${task:--}"
 done

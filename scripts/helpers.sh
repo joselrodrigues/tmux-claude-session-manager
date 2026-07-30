@@ -106,6 +106,28 @@ open_agent() {
   tmux select-window -t "=$target:$win"
 }
 
+# panes_with_option <option> [value]
+# Pane ids whose OWN pane-scope option is set — and equals <value>, when given.
+#
+# Split agents are stamped on the pane rather than on a session of their own, so
+# this is how they are found. Two steps on purpose: `#{@opt}` in a format
+# inherits, so a pane merely sitting in a session that carries the option
+# reports it as its own; the format only narrows the candidates and
+# `show-option -p`, which does not inherit, decides.
+panes_with_option() {
+  local opt="$1" want="${2:-}" p v
+  while IFS= read -r p; do
+    [ -z "$p" ] && continue
+    v="$(tmux show-option -p -t "$p" -qv "$opt" 2>/dev/null)"
+    [ -z "$v" ] && continue
+    { [ -n "$want" ] && [ "$v" != "$want" ]; } && continue
+    printf '%s\n' "$p"
+  done <<EOF
+$(tmux list-panes -a -F "#{pane_id}"$'\t'"#{$opt}" 2>/dev/null |
+  awk -F'\t' '$2 != "" { print $1 }')
+EOF
+}
+
 # name_window <session> <name>
 # Label the agent's window for the status bar. automatic-rename would
 # otherwise overwrite it with whatever command the pane is running.

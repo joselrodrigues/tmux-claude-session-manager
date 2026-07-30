@@ -3,16 +3,19 @@
 t_setup
 chmod +x "$TESTDIR/fixtures/claude"
 
-# Fake afplay ahead of the real one on PATH: the log is the only evidence a
-# sound fired, since pulse.sh is silent on stdout by design.
-mkdir -p "$T_TMP/bin"
+# Fake afplay ahead of the real one: the log is the only evidence a sound fired,
+# since pulse.sh is silent on stdout by design.
+#
+# An exported function rather than a script on PATH, so the test writes no new
+# executable. pulse.sh runs under bash and calls afplay by name, so a function
+# shadows the real binary exactly as a PATH entry would — without depending on
+# a freshly written file being executable *now*, which on a machine that scans
+# new binaries can stall past the poll and lose the sound.
 export AFPLAY_LOG="$T_TMP/afplay.log"
-cat >"$T_TMP/bin/afplay" <<'EOF'
-#!/usr/bin/env bash
-printf '%s\n' "$1" >>"$AFPLAY_LOG"
-EOF
-chmod +x "$T_TMP/bin/afplay"
-export PATH="$T_TMP/bin:$TESTDIR/fixtures:$PATH"
+# shellcheck disable=SC2329  # called from pulse.sh, through the environment
+afplay() { printf '%s\n' "$1" >>"$AFPLAY_LOG"; }
+export -f afplay
+export PATH="$TESTDIR/fixtures:$PATH"
 
 export CLAUDE_CONFIG_DIR="$T_TMP/claude-config"
 mkdir -p "$CLAUDE_CONFIG_DIR/sounds"
@@ -24,6 +27,19 @@ pulse() { TMUX_SOCKET_OVERRIDE="$TMUX_SOCK" bash "$SCRIPTS/pulse.sh" "$@"; }
 # afplay is backgrounded; give it the same beat the rest of the suite uses.
 poll() { pulse; sleep 1; }
 sounds() { cat "$AFPLAY_LOG" 2>/dev/null; }
+# afplay is backgrounded, so "no sound yet" and "no sound at all" look the same
+# for a moment — and on a loaded machine that moment outlasts the poll beat.
+# Only assertions expecting a sound wait for one; the ones expecting silence
+# would learn nothing from waiting, and a real regression still fails here,
+# just 15s later.
+sounds_within() {
+  local i=0
+  while [ "$i" -lt 15 ] && [ ! -s "$AFPLAY_LOG" ]; do
+    sleep 1
+    i=$((i + 1))
+  done
+  sounds
+}
 reset_sounds() { : >"$AFPLAY_LOG"; }
 
 $TMUX_CMD new-session -d -s claude-repo-api -c "$T_TMP" 'bash --norc'
@@ -53,7 +69,7 @@ assert_eq "$(sounds)" '' 'first sighting is silent'
 # busy -> idle: the "done" sound
 export CLAUDE_MOCK_STATUS=idle
 poll
-case "$(sounds)" in *terminado.mp3*) : ;; *) _fail "busy->idle played no done sound: $(sounds)" ;; esac
+case "$(sounds_within)" in *terminado.mp3*) : ;; *) _fail "busy->idle played no done sound: $(sounds)" ;; esac
 
 # idle -> idle: no edge, no sound
 reset_sounds
@@ -65,7 +81,7 @@ export CLAUDE_MOCK_STATUS=busy
 poll
 export CLAUDE_MOCK_STATUS=waiting
 poll
-case "$(sounds)" in
+case "$(sounds_within)" in
 *esperando.mp3*) : ;;
 *) _fail "busy->waiting played no request sound: $(sounds)" ;;
 esac
@@ -94,15 +110,13 @@ rm -f "$CLAUDE_CONFIG_DIR/mute"
 # a dropped `claude agents --json` must not erase the remembered statuses
 export CLAUDE_MOCK_STATUS=busy
 poll
-mv "$T_TMP/bin/afplay" "$T_TMP/afplay.bin" # keep the fake, hide claude instead
-mv "$TESTDIR/fixtures/claude" "$T_TMP/claude.bin"
+mv "$TESTDIR/fixtures/claude" "$T_TMP/claude.bin" # hide claude: the poll gets no data
 poll
 mv "$T_TMP/claude.bin" "$TESTDIR/fixtures/claude"
-mv "$T_TMP/afplay.bin" "$T_TMP/bin/afplay"
 reset_sounds
 export CLAUDE_MOCK_STATUS=idle
 poll
-case "$(sounds)" in
+case "$(sounds_within)" in
 *terminado.mp3*) : ;;
 *) _fail "a poll with no agent data lost the busy state: $(sounds)" ;;
 esac
@@ -117,7 +131,7 @@ export CLAUDE_MOCK_STATUS=busy
 poll
 export CLAUDE_MOCK_STATUS=idle
 poll
-case "$(sounds)" in
+case "$(sounds_within)" in
 *terminado.mp3*) : ;;
 *) _fail "unfocused control failed, focus test would prove nothing: $(sounds)" ;;
 esac
@@ -174,7 +188,7 @@ export CLAUDE_MOCK_STATUS=busy
 poll
 export CLAUDE_MOCK_STATUS=idle
 poll
-case "$(sounds)" in
+case "$(sounds_within)" in
 *terminado.mp3*) : ;;
 *) _fail "agent tab in the background should ring: $(sounds)" ;;
 esac
@@ -218,5 +232,53 @@ poll
 export CLAUDE_MOCK_STATUS=idle
 poll
 assert_eq "$(sounds)" '' 'agent tab on screen is silent whichever way the names sort'
+
+# Split mode: the agent shares a window with you instead of owning one. You are
+# typing in your own pane, so the agent's pane_active is 0 while it sits right
+# there on your screen — focus has to be the window, not the pane.
+$TMUX_CMD unlink-window -t "=0:$agent_win"
+split_pane="$($TMUX_CMD split-window -d -P -F '#{pane_id}' -t '=0:' -c "$T_TMP" 'bash --norc')"
+sleep 1
+CLAUDE_MOCK_PID="$($TMUX_CMD display-message -p -t "$split_pane" '#{pane_pid}')"
+export CLAUDE_MOCK_PID
+assert_eq "$($TMUX_CMD display-message -p -t "$split_pane" '#{pane_active}')" \
+  0 'the split must be the inactive pane, or this proves nothing'
+# Name and mute live on the pane for a split agent — its session is the user's.
+$TMUX_CMD set-option -p -t "$split_pane" @claude_agent_name splitty
+
+reset_sounds
+export CLAUDE_MOCK_STATUS=busy
+poll
+export CLAUDE_MOCK_STATUS=idle
+poll
+assert_eq "$(sounds)" '' 'split agent in the window you are looking at is silent'
+
+# Another window of the same session: off screen, so it rings — and the
+# announcement names the agent, which only the pane stamp knows.
+other_win="$($TMUX_CMD new-window -d -P -F '#{window_id}' -t '=0:' -c "$T_TMP" 'sleep 300')"
+$TMUX_CMD select-window -t "=0:$other_win"
+sleep 1
+reset_sounds
+export CLAUDE_MOCK_STATUS=busy
+poll
+export CLAUDE_MOCK_STATUS=idle
+poll
+case "$(sounds_within)" in
+*terminado.mp3*) : ;;
+*) _fail "split agent in a background window should ring: $(sounds)" ;;
+esac
+msg="$($TMUX_CMD capture-pane -p -t bystander | grep 'claude:')"
+case "$msg" in
+'claude: splitty finished'*) : ;;
+*) _fail "split agent should be named from its pane stamp: $msg" ;;
+esac
+
+reset_sounds
+$TMUX_CMD set-option -p -t "$split_pane" @claude_sound_mute on
+export CLAUDE_MOCK_STATUS=busy
+poll
+export CLAUDE_MOCK_STATUS=idle
+poll
+assert_eq "$(sounds)" '' 'per-pane mute silences a split agent'
 
 t_teardown

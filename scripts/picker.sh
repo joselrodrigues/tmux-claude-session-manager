@@ -8,6 +8,8 @@
 # occupies. Two kinds of row jump differently:
 #   dedicated  a Claude in a `claude-*` session this plugin launched — opened as
 #              a tab in your own session.
+#   split      a worktree agent spawned into a split of a window you already
+#              have — focused in place, since it is already where it lives.
 #   loose      a Claude running in any other pane — focused in place.
 set -uo pipefail
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -54,9 +56,10 @@ kind=$(printf '%s' "$sel" | cut -f4)
 
 session=$(tmux display-message -p -t "$pane" '#{session_name}' 2>/dev/null)
 
-if [ "$kind" = loose ]; then
-  # Focus the pane in place on the outer client. This popup closes on its own
-  # when the script exits.
+if [ "$kind" != dedicated ]; then
+  # Focus the pane in place on the outer client — a split agent already sits in
+  # a window of someone's session, so there is nothing to link. This popup
+  # closes on its own when the script exits.
   if [ -n "$parent" ]; then
     tmux switch-client -c "$parent" -t "$session" 2>/dev/null
   else

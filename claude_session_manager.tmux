@@ -35,6 +35,14 @@ popup_h="$(get_tmux_option @claude_popup_height '90%')"
 tmux bind-key "$spawn_key" \
   run-shell "tmux display-popup -w $popup_w -h $popup_h -E \"$CURRENT_DIR/scripts/spawn-prompt.sh #{q:pane_current_path} #{q:client_name}\""
 
+# Same spawn, opened as a split of this window instead of as a tab. The prompt
+# asks for the orientation, so this costs one key rather than two.
+# #{q:pane_id} is the pane that pressed the key: inside the popup, tmux's own
+# "current pane" is the popup itself, so the target has to be carried in.
+split_key="$(get_tmux_option @claude_split_key 'S')"
+tmux bind-key "$split_key" \
+  run-shell "tmux display-popup -w $popup_w -h $popup_h -E \"$CURRENT_DIR/scripts/spawn-prompt.sh #{q:pane_current_path} #{q:client_name} --split #{q:pane_id}\""
+
 # Close an agent's tab and leave the agent running. This is the safe opposite
 # of tmux's own kill-window (prefix + &), which would take the agent with it.
 unlink_key="$(get_tmux_option @claude_unlink_key 'b')"

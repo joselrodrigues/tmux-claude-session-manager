@@ -44,8 +44,9 @@ set -g @plugin 'craftzdog/tmux-claude-session-manager'
 Then hit `prefix` + <kbd>I</kbd> to install.
 
 > **Keybinding note:** by default the plugin binds `prefix` + `y` (launch),
-> `prefix` + `u` (list), `prefix` + `Y` (spawn) and `prefix` + `b` (close an
-> agent tab). If your config binds those elsewhere, either change the options
+> `prefix` + `u` (list), `prefix` + `Y` (spawn), `prefix` + `S` (spawn into a
+> split) and `prefix` + `b` (close an agent tab). If your config binds those
+> elsewhere, either change the options
 > below, or make sure the plugin loads **after** your own bindings (put
 > `run '~/.tmux/plugins/tpm/tpm'` _after_ them) so the one you want wins.
 
@@ -68,6 +69,7 @@ run-shell ~/clone/path/claude_session_manager.tmux
 | `prefix` + `y` | Launch (or re-open) a Claude session for the current directory, as a tab      |
 | `prefix` + `u` | Open the agent picker                                                         |
 | `prefix` + `Y` | Spawn a named agent in its own git worktree                                   |
+| `prefix` + `S` | Spawn one the same way, but as a split of this window                        |
 | `prefix` + `b` | Close the agent tab you are on, leaving the agent running                     |
 
 > ⚠️ **`prefix` + `&` kills the agent.** An agent tab is a real tmux window, so
@@ -99,6 +101,7 @@ Set any of these before the plugin loads (defaults shown):
 set -g @claude_launch_key     'y'                    # prefix key: launch/open for current dir
 set -g @claude_list_key       'u'                    # prefix key: open the picker
 set -g @claude_spawn_key      'Y'                    # prefix key: spawn named agent
+set -g @claude_split_key      'S'                    # prefix key: spawn one into a split of this window
 set -g @claude_command        'claude'               # command run in new sessions
 set -g @claude_args           ''                     # extra args appended to the command
 set -g @claude_session_prefix 'claude-'              # tmux session name prefix
@@ -163,6 +166,15 @@ so tmux stores a literal `$` (in a single-quoted value, use a bare
   so an agent tab keeps running when you close it with `unlink-window`, and
   survives your session being destroyed entirely. Opening the same agent twice
   focuses the tab you already have rather than adding a second one.
+- **A split agent is the opposite trade.** `prefix` + `S` spawns the same
+  worktree agent, but as a plain split of the window you are in — no session of
+  its own, nothing linked anywhere. It lives exactly as long as its pane: close
+  the pane and Claude dies with it (the worktree and branch stay on disk, and
+  nothing cleans them up). To keep one around without a tab of your own screen,
+  `break-pane` moves it into a window of its own; the agent does not notice, and
+  `ctrl-x` in the picker still kills it with the usual worktree cleanup.
+  Everything that identifies a tab agent — its worktree, name and task — is
+  stamped on the pane instead of on a session.
 - **`claude agents --json`** is the source of truth for what is running and how it
   is doing. Each Claude session self-reports its state (`busy` / `waiting` /
   `idle`) to a supervisor daemon, which that command publishes. Nothing here scans
@@ -179,9 +191,10 @@ so tmux stores a literal `$` (in a single-quoted value, use a bare
 - The **picker** renders those rows with a live `capture-pane` preview. It is
   itself a popup — a chooser you pass through, not somewhere you live. On `enter`
   a **dedicated** agent (in a `claude-*` session) opens as a tab in your session,
-  while a **loose** one (any other pane) is focused in place. `ctrl-x` kills the
-  Claude process itself: a dedicated session dies with its last window, and a
-  loose pane keeps the shell that hosted it.
+  while a **split** one (a stamped pane) or a **loose** one (any other pane) is
+  focused in place — both already live somewhere. `ctrl-x` kills the Claude
+  process itself: a dedicated session dies with its last window, a split agent
+  takes its pane with it, and a loose pane keeps the shell that hosted it.
 
 ## Named agents & worktrees
 
@@ -194,6 +207,7 @@ tasks and wait for completion via CLI.
 | Command | Action |
 | ------- | ------ |
 | `spawn.sh [name] [repo] ["task"]` | Launch a named agent for `<repo>` with the given task; prints the session name on stdout. `name` is optional — empty auto-generates `agentN` (names cannot contain dots). Reuses worktree if name exists in that repo. `--no-popup` is accepted for CLI compatibility but is a no-op. |
+| `spawn.sh [name] [repo] ["task"] --split <h\|v> [--target <pane>]` | The same, as a split of `<pane>`'s window (`h` side by side, `v` stacked) instead of a session; prints the new pane id on stdout. `--target` defaults to whatever tmux calls the current pane, which is why the keybinding always passes it. |
 | `agent.sh send <name\|@target> '<message>'` | Send text to an agent or group target. |
 | `agent.sh read <name> [--lines N]` | Print agent's pane output. |
 | `agent.sh wait <name> [--status <waiting\|idle\|busy>] [--match <text> [--regex]] [--signal <done\|blocked>] [--timeout SEC] [--json]` | Block until status matches, text appears, or signal is sent. |
@@ -228,18 +242,20 @@ running and go back to your own window:
 | `busy` → `idle`  | `@claude_sound_done`      | `claude: <name> finished`     |
 | `busy` → `waiting` | `@claude_sound_request` | `claude: <name> needs input`  |
 
-An agent is considered **focused** — and therefore silent — only when it is the
-active pane of the active window of an *attached* session. That can be its own
-session or, more usually, the session you opened it into as a tab: an agent tab
-you are looking at is silent, and the same tab sitting in the background still
-rings.
+An agent is considered **focused** — and therefore silent — only when its window
+is the active window of an *attached* session. That can be its own session or,
+more usually, the session you opened it into as a tab: an agent tab you are
+looking at is silent, and the same tab sitting in the background still rings. It
+is the window rather than the pane because a split agent shares a window with
+you — it is on your screen while you type in your own pane next to it.
 tmux cannot see whether the terminal emulator itself is in the foreground, so an
 attached client behind another app still counts as focused.
 
 Mute one agent without silencing the rest:
 
 ```bash
-tmux set-option -t claude-myrepo-api @claude_sound_mute on
+tmux set-option -t claude-myrepo-api @claude_sound_mute on   # tab agent
+tmux set-option -p -t %7 @claude_sound_mute on               # split agent (its pane)
 ```
 
 `~/.claude/mute` (the file `cmute`/`cunmute` toggle) silences everything, and
