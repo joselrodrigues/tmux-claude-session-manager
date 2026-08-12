@@ -122,6 +122,21 @@ cmd="$(get_tmux_option @claude_command 'claude')"
 args="$(get_tmux_option @claude_args '')"
 [ -n "$args" ] && cmd="$cmd $args"
 
+# send_task_later <pane>
+# Type the task into the agent once it is listening — from a detached waiter,
+# because the agent takes seconds to come up and the spawn popup must close
+# now, not then. All fds closed (our stdout is read through a command
+# substitution, which would otherwise never see EOF) and HUP ignored (the
+# popup's pty dies with the popup, and a non-interactive shell puts background
+# jobs in its own process group).
+send_task_later() {
+  [ -z "$task" ] && return 0
+  (
+    trap '' HUP
+    send_task "$1" "$task"
+  ) </dev/null >/dev/null 2>&1 &
+}
+
 # Split mode: the agent is a plain pane in a window you already have, so it
 # lives and dies with that pane and there is no session to link anywhere. The
 # stamps go on the pane instead — pane options do not inherit, which is what
@@ -135,17 +150,20 @@ if [ -n "$split" ]; then
   tm set-option -p -t "$pane" @claude_agent_name "$name"
   [ -n "$task" ] && tm set-option -p -t "$pane" @claude_task "$task"
   tm select-pane -t "$pane" -T "$name" 2>/dev/null
+  send_task_later "$pane"
   # No name_window: the window is the user's, not the agent's.
   printf '%s\n' "$pane"
   exit 0
 fi
 
-tm new-session -d -s "$session" -c "$wt_dir" "$cmd" || die "new-session failed"
+pane="$(tm new-session -d -P -F '#{pane_id}' -s "$session" -c "$wt_dir" "$cmd")" ||
+  die "new-session failed"
 tm set-option -t "$session" @claude_worktree "$wt_dir"
 tm set-option -t "$session" @claude_agent_name "$name"
 [ -n "$task" ] && tm set-option -t "$session" @claude_task "$task"
 tm select-pane -t "$session:" -T "$name" 2>/dev/null
 name_window "$session" "$name"
+send_task_later "$pane"
 
 # Nothing is opened here: the caller decides where the agent shows up, using
 # the session name printed below (spawn-prompt.sh hands it to open_agent).
