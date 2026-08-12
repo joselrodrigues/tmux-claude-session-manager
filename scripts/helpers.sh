@@ -56,6 +56,49 @@ claude_transcript_mtime() {
   done
 }
 
+# claude_agents_tsv
+# One line per running interactive Claude:
+#   pid \t status \t sessionId \t cwd \t last-activity-epoch
+#
+# Each Claude writes its own state to $CLAUDE_CONFIG_DIR/sessions/<pid>.json,
+# and that is the same data `claude agents --json` publishes — minus the CLI's
+# start-up cost, which on a loaded machine is seconds. The picker pays it per
+# render, `wait` per poll tick and pulse.sh every status-interval forever, so
+# reading the files directly is the difference between a picker that opens and
+# one that looks dead. The CLI stays as the fallback for machines where the
+# files are absent, which keeps status working with no setup.
+#
+# Status is normalised to the CLI's three-word vocabulary: the files also carry
+# raw states like `shell`, which the CLI reports as busy and which callers here
+# only understand as "working".
+#
+# The last field is empty on the fallback path — `claude agents --json` reports
+# only `startedAt`, never a last-activity time.
+#
+# ponytail: a torn write while jq reads drops that agent for one tick. It
+# self-corrects on the next one, except in pulse.sh, where the state file is
+# rewritten from this output — so a pid missing for a tick forgets its pending
+# `busy` and loses the busy -> idle edge. Narrow enough to live with; per-file
+# jq invocations if it ever bites.
+claude_agents_tsv() {
+  local out
+  out="$(jq -r '
+    select(.kind == "interactive")
+    | [ .pid,
+        (if .status == "idle" or .status == "waiting" then .status else "busy" end),
+        .sessionId,
+        .cwd,
+        (if .statusUpdatedAt then (.statusUpdatedAt / 1000 | floor) else "" end) ]
+    | @tsv' "${CLAUDE_CONFIG_DIR:-$HOME/.claude}"/sessions/*.json 2>/dev/null)"
+  [ -n "$out" ] && {
+    printf '%s\n' "$out"
+    return 0
+  }
+  claude agents --json 2>/dev/null |
+    jq -r '.[] | select(.kind == "interactive")
+      | [.pid, .status, .sessionId, .cwd, ""] | @tsv' 2>/dev/null
+}
+
 # valid_agent_name <name>
 # Charset for session names AND git branch names: rejects git-ref invalids
 # and anything argv/tmux-unsafe. Dots are forbidden outright (not just the
@@ -70,3 +113,74 @@ valid_agent_name() {
 # tmux stores user options opaquely and bash never tilde-expands variable
 # contents, so a leading ~ in @claude_worktree_dir must be expanded by hand.
 expand_tilde() { printf '%s' "${1/#\~/$HOME}"; }
+
+# open_agent <session-or-window-id> [client]
+# Show an agent as a tab in the client's session, and focus it.
+#
+# The agent keeps living in its own session; link-window only makes its window
+# appear in a second one, so closing the tab with unlink-window leaves it
+# running. Without <client> the target is tmux's current session, which is
+# ambiguous with more than one client attached — pass it whenever you have it.
+# A @window-id argument is used as-is: once a window is linked into two
+# sessions, resolving "which session does this pane belong to" is ambiguous,
+# but the window id names the one shared window object unambiguously.
+open_agent() {
+  local session="$1" client="${2:-}" win target
+  case "$session" in
+  @*) win="$session" ;;
+  *) win="$(tmux list-windows -t "=$session" -F '#{window_id}' | head -1)" ;;
+  esac
+  [ -z "$win" ] && return 1
+  # #{client_session}, not #{session_name}: -c picks which client the message
+  # goes to, but the format is still evaluated against tmux's current session,
+  # which is whichever one was last created or used — not the one this client
+  # is looking at. Spawning an agent makes the mismatch the common case.
+  if [ -n "$client" ]; then
+    target="$(tmux display-message -p -c "$client" '#{client_session}')"
+  else
+    target="$(tmux display-message -p '#{session_name}')"
+  fi
+  [ -z "$target" ] && return 1
+
+  # link-window is not idempotent: linking a window that is already here
+  # succeeds and leaves two tabs pointing at the same window.
+  tmux list-windows -t "=$target" -F '#{window_id}' | grep -qx "$win" ||
+    tmux link-window -s "$win" -t "=$target:"
+
+  # Switch before selecting, and address the window through its session: a
+  # linked window belongs to two sessions, so a bare `-t @id` is ambiguous
+  # about whose current-window pointer moves, and a client left on the old
+  # session would not follow the selection.
+  [ -n "$client" ] && tmux switch-client -c "$client" -t "=$target"
+  tmux select-window -t "=$target:$win"
+}
+
+# panes_with_option <option> [value]
+# Pane ids whose OWN pane-scope option is set — and equals <value>, when given.
+#
+# Split agents are stamped on the pane rather than on a session of their own, so
+# this is how they are found. Two steps on purpose: `#{@opt}` in a format
+# inherits, so a pane merely sitting in a session that carries the option
+# reports it as its own; the format only narrows the candidates and
+# `show-option -p`, which does not inherit, decides.
+panes_with_option() {
+  local opt="$1" want="${2:-}" p v
+  while IFS= read -r p; do
+    [ -z "$p" ] && continue
+    v="$(tmux show-option -p -t "$p" -qv "$opt" 2>/dev/null)"
+    [ -z "$v" ] && continue
+    { [ -n "$want" ] && [ "$v" != "$want" ]; } && continue
+    printf '%s\n' "$p"
+  done <<EOF
+$(tmux list-panes -a -F "#{pane_id}"$'\t'"#{$opt}" 2>/dev/null |
+  awk -F'\t' '$2 != "" { print $1 }')
+EOF
+}
+
+# name_window <session> <name>
+# Label the agent's window for the status bar. automatic-rename would
+# otherwise overwrite it with whatever command the pane is running.
+name_window() {
+  tmux rename-window -t "$1:" "$2"
+  tmux set-window-option -t "$1:" automatic-rename off
+}

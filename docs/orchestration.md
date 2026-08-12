@@ -38,3 +38,9 @@ got the contract.
 
 `send` accepts `@all`, `@idle`, `@waiting`, `@busy` — e.g.
 `agent.sh send @idle 'pick up the next task from TODO.md'`.
+
+Group targets enumerate sessions, so they cover the agents `spawn.sh` gives a
+session of their own — not the ones spawned with `--split`, which live in a
+pane of somebody's window and are stamped there. Those still answer to their
+bare name and to their pane id (`spawn.sh --split` prints it in place of a
+session name); address them individually.

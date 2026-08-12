@@ -15,9 +15,15 @@
 # state file, and exits.
 #
 # Divergence from the brief, which said "sounds for agents whose session is not
-# the attached one": an agent counts as focused only when its session is
-# attached AND it is the active pane of the active window. A background window
-# of the session you are attached to is not on your screen, so it still rings.
+# the attached one": an agent counts as focused only when its window is the
+# active window of an attached session — its own session, or any session its
+# window is linked into as a tab. A background window of the session you are
+# attached to is not on your screen, so it still rings.
+#
+# The window, not the pane: a split agent shares a window with you, and while
+# you type in your own pane the agent's pane_active is 0 even though it is
+# right there on screen. For a tab agent the two are the same test — its window
+# holds nothing but the agent.
 #
 #   pulse.sh install   — append the poll to status-right (idempotent)
 #   pulse.sh           — one poll; prints nothing, by design
@@ -55,6 +61,7 @@ config="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
 
 sound_done="$(expand_tilde "$(get_tmux_option @claude_sound_done "$config/sounds/terminado.mp3")")"
 sound_request="$(expand_tilde "$(get_tmux_option @claude_sound_request "$config/sounds/esperando.mp3")")"
+prefix="$(get_tmux_option @claude_session_prefix 'claude-')"
 
 state="${CLAUDE_PULSE_STATE:-${TMPDIR:-/tmp}/claude-pulse-$(id -u).state}"
 lock="$state.lock"
@@ -66,11 +73,10 @@ find "$lock" -maxdepth 0 -mmin +1 -exec rmdir {} \; 2>/dev/null
 mkdir "$lock" 2>/dev/null || exit 0
 trap 'rmdir "$lock" 2>/dev/null' EXIT
 
-agents="$(claude agents --json 2>/dev/null |
-  jq -r '.[] | select(.kind == "interactive") | [.pid, .status] | @tsv' 2>/dev/null)"
+agents="$(claude_agents_tsv | cut -f1,2)"
 
 # Nothing to diff, and leaving the state file untouched is what makes a single
-# failed `claude agents --json` harmless: were it rewritten empty, every pending
+# failed read harmless: were it rewritten empty, every pending
 # busy would be forgotten and the busy -> idle edge — the whole point of this
 # script — would never be seen.
 [ -n "$agents" ] || exit 0
@@ -82,20 +88,33 @@ agents="$(claude agents --json 2>/dev/null |
 current="$({
   ps -o pid=,tty= -p "$(printf '%s\n' "$agents" | cut -f1 | tr '\n' ',' | sed 's/,$//')" 2>/dev/null |
     awk '{ print "P\t" $1 "\t" $2 }'
-  tm list-panes -a -F $'T\t#{pane_tty}\t#{session_name}\t#{session_attached}\t#{window_active}\t#{pane_active}' 2>/dev/null
+  tm list-panes -a -F $'T\t#{pane_tty}\t#{session_name}\t#{session_attached}\t#{window_active}\t#{pane_id}' 2>/dev/null
   printf '%s\n' "$agents" | sed $'s/^/A\t/'
-} | awk -F'\t' '
+} | awk -F'\t' -v prefix="$prefix" '
   $1 == "P" { tty_of[$2] = $3; next }
   $1 == "T" {
     sub(/^\/dev\//, "", $2)
-    sess[$2] = $3
-    focused[$2] = ($4 > 0 && $5 == 1 && $6 == 1) ? 1 : 0
+    # An agent opened as a tab lives in two sessions at once, so its pane comes
+    # back from list-panes twice and neither row can be trusted alone.
+    #
+    # The dedicated session is the misleading one: that window is always the
+    # only -- therefore active -- window there, and the session is never
+    # attached (a client attaches to a session, not a window). Read by itself
+    # it reports "not focused" even while you are looking straight at the tab.
+    # So focus is an OR across every session holding the pane...
+    if ($4 > 0 && $5 == 1) focused[$2] = 1
+    # ...while the session recorded is deliberately the dedicated one, since
+    # for a tab agent @claude_agent_name and @claude_sound_mute are set there
+    # and nowhere else. A split agent carries them on its pane instead, which
+    # reads the same from either row.
+    if (!($2 in sess) || index($3, prefix) == 1) sess[$2] = $3
+    pane[$2] = $6
     next
   }
   $1 == "A" {
     tty = tty_of[$2]
     if (tty == "" || !(tty in sess)) next   # this Claude is not running inside tmux
-    printf "%s\t%s\t%s\t%s\n", $2, $3, sess[tty], focused[tty]
+    printf "%s\t%s\t%s\t%s\t%s\n", $2, $3, sess[tty], focused[tty] + 0, pane[tty]
   }
 ')"
 
@@ -108,7 +127,17 @@ $(tm list-clients -F '#{client_name}' 2>/dev/null)
 EOF
 }
 
-while IFS=$'\t' read -r pid status session focused; do
+# A split agent is stamped on its pane, a tab agent on its own session; asking
+# the pane first is what keeps a split from answering with the mute setting of
+# whatever session it happens to live in.
+agent_option() {
+  local v
+  v="$(tm show-option -p -t "$1" -qv "$3" 2>/dev/null)"
+  [ -z "$v" ] && v="$(tm show-option -t "$2" -qv "$3" 2>/dev/null)"
+  printf '%s' "$v"
+}
+
+while IFS=$'\t' read -r pid status session focused pane; do
   [ -z "$pid" ] && continue
   [ "$(awk -F'\t' -v p="$pid" '$1 == p { print $2; exit }' "$state" 2>/dev/null)" = busy ] || continue
   case "$status" in
@@ -117,9 +146,9 @@ while IFS=$'\t' read -r pid status session focused; do
   *) continue ;;
   esac
   [ "$focused" = 1 ] && continue
-  [ "$(tm show-option -t "$session" -qv @claude_sound_mute 2>/dev/null)" = on ] && continue
+  [ "$(agent_option "$pane" "$session" @claude_sound_mute)" = on ] && continue
 
-  name="$(tm show-option -t "$session" -qv @claude_agent_name 2>/dev/null)"
+  name="$(agent_option "$pane" "$session" @claude_agent_name)"
   announce "claude: ${name:-$session} $verb"
   [ -f "$sound" ] && afplay "$sound" >/dev/null 2>&1 </dev/null &
 done <<EOF

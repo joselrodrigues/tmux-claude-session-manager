@@ -56,6 +56,20 @@ printf '%s' "$out" | jq -e '.worktree == "none"' >/dev/null || _fail plain-json
 [ -z "$plain_err" ] || _fail "plain-stderr: $plain_err"
 assert_fail $TMUX_CMD has-session -t '=claude-alpha-plain'
 
+# an agent opened as a tab elsewhere: killing it must take the tab with it,
+# rather than leaving a dead window behind in someone else's session
+mk_agent linked1
+$TMUX_CMD new-session -d -s host -c "$T_TMP" 'sleep 300'
+linked_win="$($TMUX_CMD list-windows -t '=claude-alpha-linked1' -F '#{window_id}')"
+$TMUX_CMD link-window -s "$linked_win" -t '=host:'
+assert_eq "$($TMUX_CMD list-windows -t '=host' -F '#{window_id}' | grep -cx "$linked_win")" \
+  1 'agent opened as a tab in host'
+assert_ok agent kill linked1
+assert_eq "$($TMUX_CMD list-windows -t '=host' -F '#{window_id}' | grep -cx "$linked_win")" \
+  0 'killing the agent closed its tab'
+assert_fail $TMUX_CMD has-session -t '=claude-alpha-linked1'
+$TMUX_CMD kill-session -t '=host' 2>/dev/null
+
 # loose pane in a session without the claude- prefix: kill must refuse it
 # rather than tearing down the whole session (and whatever else lives in it)
 $TMUX_CMD new-session -d -s work -c "$T_TMP" 'sleep 300'

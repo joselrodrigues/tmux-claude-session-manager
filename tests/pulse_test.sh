@@ -3,16 +3,19 @@
 t_setup
 chmod +x "$TESTDIR/fixtures/claude"
 
-# Fake afplay ahead of the real one on PATH: the log is the only evidence a
-# sound fired, since pulse.sh is silent on stdout by design.
-mkdir -p "$T_TMP/bin"
+# Fake afplay ahead of the real one: the log is the only evidence a sound fired,
+# since pulse.sh is silent on stdout by design.
+#
+# An exported function rather than a script on PATH, so the test writes no new
+# executable. pulse.sh runs under bash and calls afplay by name, so a function
+# shadows the real binary exactly as a PATH entry would — without depending on
+# a freshly written file being executable *now*, which on a machine that scans
+# new binaries can stall past the poll and lose the sound.
 export AFPLAY_LOG="$T_TMP/afplay.log"
-cat >"$T_TMP/bin/afplay" <<'EOF'
-#!/usr/bin/env bash
-printf '%s\n' "$1" >>"$AFPLAY_LOG"
-EOF
-chmod +x "$T_TMP/bin/afplay"
-export PATH="$T_TMP/bin:$TESTDIR/fixtures:$PATH"
+# shellcheck disable=SC2329  # called from pulse.sh, through the environment
+afplay() { printf '%s\n' "$1" >>"$AFPLAY_LOG"; }
+export -f afplay
+export PATH="$TESTDIR/fixtures:$PATH"
 
 export CLAUDE_CONFIG_DIR="$T_TMP/claude-config"
 mkdir -p "$CLAUDE_CONFIG_DIR/sounds"
@@ -24,6 +27,19 @@ pulse() { TMUX_SOCKET_OVERRIDE="$TMUX_SOCK" bash "$SCRIPTS/pulse.sh" "$@"; }
 # afplay is backgrounded; give it the same beat the rest of the suite uses.
 poll() { pulse; sleep 1; }
 sounds() { cat "$AFPLAY_LOG" 2>/dev/null; }
+# afplay is backgrounded, so "no sound yet" and "no sound at all" look the same
+# for a moment — and on a loaded machine that moment outlasts the poll beat.
+# Only assertions expecting a sound wait for one; the ones expecting silence
+# would learn nothing from waiting, and a real regression still fails here,
+# just 15s later.
+sounds_within() {
+  local i=0
+  while [ "$i" -lt 15 ] && [ ! -s "$AFPLAY_LOG" ]; do
+    sleep 1
+    i=$((i + 1))
+  done
+  sounds
+}
 reset_sounds() { : >"$AFPLAY_LOG"; }
 
 $TMUX_CMD new-session -d -s claude-repo-api -c "$T_TMP" 'bash --norc'
@@ -45,6 +61,25 @@ $TMUX_CMD set-option -g status-right ''
 # display-message defaults to 750ms; hold it long enough to capture.
 $TMUX_CMD set-option -g display-time 5000
 
+# Primary source: the session files each Claude publishes. The same busy ->
+# idle edge, with `claude agents --json` out of the picture entirely.
+t_session "$pid" busy
+poll
+assert_eq "$(sounds)" '' 'first sighting is silent (session files)'
+t_session "$pid" idle
+poll
+case "$(sounds_within)" in
+*terminado.mp3*) : ;;
+*) _fail "session-file busy->idle played no done sound: $(sounds)" ;;
+esac
+
+# Everything below runs on the `claude agents --json` fallback: no session
+# files, and the mock in tests/fixtures answering instead. Wiping the remembered
+# statuses is what keeps the "first sighting" assertion honest.
+reset_sounds
+t_no_sessions
+rm -f "$CLAUDE_PULSE_STATE"
+
 # first sighting has no previous status: nothing to announce
 export CLAUDE_MOCK_STATUS=busy
 poll
@@ -53,7 +88,7 @@ assert_eq "$(sounds)" '' 'first sighting is silent'
 # busy -> idle: the "done" sound
 export CLAUDE_MOCK_STATUS=idle
 poll
-case "$(sounds)" in *terminado.mp3*) : ;; *) _fail "busy->idle played no done sound: $(sounds)" ;; esac
+case "$(sounds_within)" in *terminado.mp3*) : ;; *) _fail "busy->idle played no done sound: $(sounds)" ;; esac
 
 # idle -> idle: no edge, no sound
 reset_sounds
@@ -65,7 +100,7 @@ export CLAUDE_MOCK_STATUS=busy
 poll
 export CLAUDE_MOCK_STATUS=waiting
 poll
-case "$(sounds)" in
+case "$(sounds_within)" in
 *esperando.mp3*) : ;;
 *) _fail "busy->waiting played no request sound: $(sounds)" ;;
 esac
@@ -94,15 +129,13 @@ rm -f "$CLAUDE_CONFIG_DIR/mute"
 # a dropped `claude agents --json` must not erase the remembered statuses
 export CLAUDE_MOCK_STATUS=busy
 poll
-mv "$T_TMP/bin/afplay" "$T_TMP/afplay.bin" # keep the fake, hide claude instead
-mv "$TESTDIR/fixtures/claude" "$T_TMP/claude.bin"
+mv "$TESTDIR/fixtures/claude" "$T_TMP/claude.bin" # hide claude: the poll gets no data
 poll
 mv "$T_TMP/claude.bin" "$TESTDIR/fixtures/claude"
-mv "$T_TMP/afplay.bin" "$T_TMP/bin/afplay"
 reset_sounds
 export CLAUDE_MOCK_STATUS=idle
 poll
-case "$(sounds)" in
+case "$(sounds_within)" in
 *terminado.mp3*) : ;;
 *) _fail "a poll with no agent data lost the busy state: $(sounds)" ;;
 esac
@@ -117,7 +150,7 @@ export CLAUDE_MOCK_STATUS=busy
 poll
 export CLAUDE_MOCK_STATUS=idle
 poll
-case "$(sounds)" in
+case "$(sounds_within)" in
 *terminado.mp3*) : ;;
 *) _fail "unfocused control failed, focus test would prove nothing: $(sounds)" ;;
 esac
@@ -140,5 +173,131 @@ poll
 export CLAUDE_MOCK_STATUS=idle
 poll
 assert_eq "$(sounds)" '' 'focused agent is silent'
+
+# Window mode: the agent opened as a tab in the session you are attached to.
+# Its pane then belongs to two sessions and comes back from `list-panes -a`
+# twice, which is the whole trap — read on its own, the agent's own-session row
+# claims "not focused" no matter what, because that window is always the only
+# (hence active) window there and that session is never attached.
+$TMUX_CMD kill-session -t '=attacher'
+sleep 2
+assert_eq "$($TMUX_CMD display-message -p -t claude-repo-api '#{session_attached}')" \
+  0 'attacher gone: agent session is unattached again'
+
+agent_win="$($TMUX_CMD list-windows -t '=claude-repo-api' -F '#{window_id}')"
+keeper_win="$($TMUX_CMD list-windows -t '=t-keeper' -F '#{window_id}' | head -1)"
+$TMUX_CMD link-window -s "$agent_win" -t '=t-keeper:'
+
+# bystander is attached to t-keeper, so selecting the linked tab there puts the
+# agent on a real screen without its own session ever being attached.
+$TMUX_CMD select-window -t "=t-keeper:$agent_win"
+sleep 1
+reset_sounds
+export CLAUDE_MOCK_STATUS=busy
+poll
+export CLAUDE_MOCK_STATUS=idle
+poll
+assert_eq "$(sounds)" '' 'agent tab on screen is silent'
+
+# Same agent, same link — you just looked away.
+$TMUX_CMD select-window -t "=t-keeper:$keeper_win"
+sleep 1
+reset_sounds
+export CLAUDE_MOCK_STATUS=busy
+poll
+export CLAUDE_MOCK_STATUS=idle
+poll
+case "$(sounds_within)" in
+*terminado.mp3*) : ;;
+*) _fail "agent tab in the background should ring: $(sounds)" ;;
+esac
+
+# The other half of the two-rows trap: picking the wrong row for the *name*
+# loses @claude_agent_name and @claude_sound_mute, which live on the agent's
+# own session and not on the one you linked it into.
+msg="$($TMUX_CMD capture-pane -p -t bystander | grep 'claude:')"
+case "$msg" in
+'claude: api finished'*) : ;;
+*) _fail "linked agent should still resolve to 'api': $msg" ;;
+esac
+
+reset_sounds
+$TMUX_CMD set-option -t claude-repo-api @claude_sound_mute on
+export CLAUDE_MOCK_STATUS=busy
+poll
+export CLAUDE_MOCK_STATUS=idle
+poll
+assert_eq "$(sounds)" '' 'per-agent mute still applies to a linked agent'
+$TMUX_CMD set-option -t claude-repo-api @claude_sound_mute off
+
+# The same two rows, in the other order. list-panes -a walks sessions by name,
+# so which row a naive last-one-wins read keeps depends on how the session you
+# linked into sorts against the claude- prefix — and each order breaks a
+# different half. Above, t-keeper sorts last and costs you the agent's name;
+# here a session named "0" (the ordinary case) puts the agent's own row last
+# and costs you the focus bit instead.
+$TMUX_CMD unlink-window -t "=t-keeper:$agent_win"
+$TMUX_CMD new-session -d -s 0 -c "$T_TMP" 'sleep 300'
+$TMUX_CMD new-session -d -s zclient -c "$T_TMP" "env -u TMUX $TMUX_CMD attach -t 0"
+sleep 2
+[ -n "$($TMUX_CMD list-clients -t 0 -F '#{client_name}')" ] ||
+  _fail 'no client on session 0, the focus assertion below would prove nothing'
+$TMUX_CMD link-window -s "$agent_win" -t '=0:'
+$TMUX_CMD select-window -t "=0:$agent_win"
+sleep 1
+reset_sounds
+export CLAUDE_MOCK_STATUS=busy
+poll
+export CLAUDE_MOCK_STATUS=idle
+poll
+assert_eq "$(sounds)" '' 'agent tab on screen is silent whichever way the names sort'
+
+# Split mode: the agent shares a window with you instead of owning one. You are
+# typing in your own pane, so the agent's pane_active is 0 while it sits right
+# there on your screen — focus has to be the window, not the pane.
+$TMUX_CMD unlink-window -t "=0:$agent_win"
+split_pane="$($TMUX_CMD split-window -d -P -F '#{pane_id}' -t '=0:' -c "$T_TMP" 'bash --norc')"
+sleep 1
+CLAUDE_MOCK_PID="$($TMUX_CMD display-message -p -t "$split_pane" '#{pane_pid}')"
+export CLAUDE_MOCK_PID
+assert_eq "$($TMUX_CMD display-message -p -t "$split_pane" '#{pane_active}')" \
+  0 'the split must be the inactive pane, or this proves nothing'
+# Name and mute live on the pane for a split agent — its session is the user's.
+$TMUX_CMD set-option -p -t "$split_pane" @claude_agent_name splitty
+
+reset_sounds
+export CLAUDE_MOCK_STATUS=busy
+poll
+export CLAUDE_MOCK_STATUS=idle
+poll
+assert_eq "$(sounds)" '' 'split agent in the window you are looking at is silent'
+
+# Another window of the same session: off screen, so it rings — and the
+# announcement names the agent, which only the pane stamp knows.
+other_win="$($TMUX_CMD new-window -d -P -F '#{window_id}' -t '=0:' -c "$T_TMP" 'sleep 300')"
+$TMUX_CMD select-window -t "=0:$other_win"
+sleep 1
+reset_sounds
+export CLAUDE_MOCK_STATUS=busy
+poll
+export CLAUDE_MOCK_STATUS=idle
+poll
+case "$(sounds_within)" in
+*terminado.mp3*) : ;;
+*) _fail "split agent in a background window should ring: $(sounds)" ;;
+esac
+msg="$($TMUX_CMD capture-pane -p -t bystander | grep 'claude:')"
+case "$msg" in
+'claude: splitty finished'*) : ;;
+*) _fail "split agent should be named from its pane stamp: $msg" ;;
+esac
+
+reset_sounds
+$TMUX_CMD set-option -p -t "$split_pane" @claude_sound_mute on
+export CLAUDE_MOCK_STATUS=busy
+poll
+export CLAUDE_MOCK_STATUS=idle
+poll
+assert_eq "$(sounds)" '' 'per-pane mute silences a split agent'
 
 t_teardown

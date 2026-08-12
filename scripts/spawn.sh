@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
-# Spawn a named Claude agent: worktree + dedicated session (+ popup).
-#   spawn.sh <name> [dir] [task] [--no-popup] [--window <window-id>]
+# Spawn a named Claude agent: worktree + dedicated session.
+#   spawn.sh <name> [dir] [task] [--no-popup]
+#   spawn.sh <name> [dir] [task] --split h|v [--target <pane-id>]
+# Prints the session name, or with --split the new pane id.
 # TMUX_SOCKET_OVERRIDE reroutes every tmux call (tests use a scratch server).
 set -uo pipefail
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -23,11 +25,20 @@ die() {
   exit 1
 }
 
-name='' path='' task='' window='' pos=0
+name='' path='' task='' split='' target='' pos=0
 while [ $# -gt 0 ]; do
   case "$1" in
   --no-popup) : ;;
-  --window) window="${2:-}"; shift ;;
+  --split) split="${2:-}"; shift ;;
+  # Which pane to split. Must be passed explicitly: the binding runs the prompt
+  # in a display-popup, so by the time spawn.sh runs, tmux's own idea of the
+  # current pane is the popup — the same class of bug open_agent hits with
+  # #{client_session}. The binding expands #{q:pane_id} of the invoking pane.
+  --target) target="${2:-}"; shift ;;
+  # Accepted and ignored, like --no-popup: agents no longer record an origin
+  # window. Without this arm the positional-by-index branch below would take
+  # "--window" for the task text and drop the id that follows it, silently.
+  --window) shift ;;
   *)
     # Positional by index, not by first-empty-slot: an empty name argument
     # (auto-name request) must not swallow the path into its slot.
@@ -42,6 +53,13 @@ while [ $# -gt 0 ]; do
   shift
 done
 path="${path:-$PWD}"
+
+case "$split" in
+'') ;;
+h) split_flag=-h ;;
+v) split_flag=-v ;;
+*) die "--split takes h or v, not '$split'" ;;
+esac
 
 repo_root="$(git -C "$path" rev-parse --show-toplevel 2>/dev/null)" ||
   die "$path is not inside a git repo"
@@ -70,6 +88,12 @@ tm has-session -t "=$session" 2>/dev/null &&
 wt_base="$(expand_tilde "$(get_tmux_option @claude_worktree_dir "$HOME/.claude-worktrees")")"
 wt_dir="$wt_base/${repo}-$(session_hash "$repo_root")/$name"
 
+# has-session above cannot see a split agent — it has no session of its own —
+# and the worktree already existing is normal (it is reused). Without this, a
+# second spawn of the same name would put two Claudes in one worktree.
+busy="$(panes_with_option @claude_worktree "$wt_dir" | head -1)"
+[ -n "$busy" ] && die "agent '$name' already running in pane $busy"
+
 if [ ! -d "$wt_dir" ]; then
   mkdir -p "$(dirname "$wt_dir")"
   if git -C "$repo_root" show-ref --verify --quiet "refs/heads/$name"; then
@@ -91,15 +115,32 @@ cmd="$(get_tmux_option @claude_command 'claude')"
 args="$(get_tmux_option @claude_args '')"
 [ -n "$args" ] && cmd="$cmd $args"
 
+# Split mode: the agent is a plain pane in a window you already have, so it
+# lives and dies with that pane and there is no session to link anywhere. The
+# stamps go on the pane instead — pane options do not inherit, which is what
+# lets agent.sh tell a split agent from whatever session it happens to sit in
+# (including another agent's).
+if [ -n "$split" ]; then
+  split_cmd=(split-window "$split_flag" -P -F '#{pane_id}' -c "$wt_dir")
+  [ -n "$target" ] && split_cmd+=(-t "$target")
+  pane="$(tm "${split_cmd[@]}" "$cmd")" || die "split-window failed"
+  tm set-option -p -t "$pane" @claude_worktree "$wt_dir"
+  tm set-option -p -t "$pane" @claude_agent_name "$name"
+  [ -n "$task" ] && tm set-option -p -t "$pane" @claude_task "$task"
+  tm select-pane -t "$pane" -T "$name" 2>/dev/null
+  # No name_window: the window is the user's, not the agent's.
+  printf '%s\n' "$pane"
+  exit 0
+fi
+
 tm new-session -d -s "$session" -c "$wt_dir" "$cmd" || die "new-session failed"
 tm set-option -t "$session" @claude_worktree "$wt_dir"
 tm set-option -t "$session" @claude_agent_name "$name"
 [ -n "$task" ] && tm set-option -t "$session" @claude_task "$task"
-[ -n "$window" ] && tm set-option -t "$session" @claude_origin "$window"
 tm select-pane -t "$session:" -T "$name" 2>/dev/null
+name_window "$session" "$name"
 
-# No display-popup here: nesting a popup from inside the spawn-prompt popup
-# does not work in practice. The caller owns the popup — spawn-prompt.sh
-# attaches in place using the session name printed below. --no-popup is
-# still accepted for compatibility; behavior is identical.
+# Nothing is opened here: the caller decides where the agent shows up, using
+# the session name printed below (spawn-prompt.sh hands it to open_agent).
+# --no-popup is still accepted for compatibility; behavior is identical.
 printf '%s\n' "$session"

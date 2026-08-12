@@ -6,8 +6,10 @@
 #
 # Rows come from agents.sh, which pairs each running Claude with the tmux pane it
 # occupies. Two kinds of row jump differently:
-#   dedicated  a Claude in a `claude-*` session this plugin launched — resumed in
-#              the popup, over the window it was launched from.
+#   dedicated  a Claude in a `claude-*` session this plugin launched — opened as
+#              a tab in your own session.
+#   split      a worktree agent spawned into a split of a window you already
+#              have — focused in place, since it is already where it lives.
 #   loose      a Claude running in any other pane — focused in place.
 set -uo pipefail
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -37,15 +39,15 @@ spawn_dir="$(tmux display-message -p -t "${parent:-}" '#{pane_current_path}' 2>/
 
 # ctrl-x routes through agent.sh kill (worktree cleanup) with the pane id;
 # ctrl-s prompts on the picker's own tty and sends without attaching;
-# ctrl-n swaps this popup's process for the spawn prompt, which attaches to
-# the new agent in place once it's spawned.
+# ctrl-n swaps this popup's process for the spawn prompt, which opens the new
+# agent as a tab on $parent once it's spawned.
 sel=$("$DIR/agents.sh" | fzf --ansi --delimiter='\t' --with-nth=5.. \
   --reverse --cycle \
   --header='Claude agents · enter: jump · ctrl-n: new · ctrl-s: send · ctrl-x: kill' \
   --preview='tmux capture-pane -ept {2}' --preview-window='up,70%,follow' \
   --bind="ctrl-x:execute-silent($DIR/agent.sh kill {2} || kill {3})+reload(sleep 0.3; $self --list)" \
   --bind="ctrl-s:execute(printf 'send> '; IFS= read -r p; [ -n \"\$p\" ] && $DIR/agent.sh send {2} \"\$p\")+reload(sleep 0.3; $self --list)" \
-  --bind="ctrl-n:become($DIR/spawn-prompt.sh $(printf '%q' "$spawn_dir"))" \
+  --bind="ctrl-n:become($DIR/spawn-prompt.sh $(printf '%q' "$spawn_dir") $(printf '%q' "$parent"))" \
   ${extra_opts[@]+"${extra_opts[@]}"})
 
 [ -z "$sel" ] && exit 0
@@ -54,9 +56,10 @@ kind=$(printf '%s' "$sel" | cut -f4)
 
 session=$(tmux display-message -p -t "$pane" '#{session_name}' 2>/dev/null)
 
-if [ "$kind" = loose ]; then
-  # Focus the pane in place on the outer client. This popup closes on its own
-  # when the script exits.
+if [ "$kind" != dedicated ]; then
+  # Focus the pane in place on the outer client — a split agent already sits in
+  # a window of someone's session, so there is nothing to link. This popup
+  # closes on its own when the script exits.
   if [ -n "$parent" ]; then
     tmux switch-client -c "$parent" -t "$session" 2>/dev/null
   else
@@ -67,14 +70,10 @@ if [ "$kind" = loose ]; then
   exit 0
 fi
 
-# Move the parent client to the window the session was launched from (best-effort),
-# focus the chosen Claude's own window inside that session, then resume it in THIS
-# popup over the top. Falls back to resuming over the current window when
-# origin/parent are unknown.
-origin=$(tmux show-options -qv -t "$session" @claude_origin 2>/dev/null)
-[ -n "$origin" ] && [ -n "$parent" ] &&
-  tmux switch-client -c "$parent" -t "$origin" 2>/dev/null
-
-tmux select-window -t "$pane" 2>/dev/null
-tmux select-pane -t "$pane" 2>/dev/null
-tmux attach-session -t "$session"
+# Dedicated agent: show it as a tab in the parent client's session and focus
+# it. Addressed by window id, not session — once the window is linked into the
+# user's session, the pane's session name is ambiguous and can resolve to the
+# user's side, which would select the wrong window entirely. This popup closes
+# on its own when the script exits.
+win=$(tmux display-message -p -t "$pane" '#{window_id}' 2>/dev/null)
+open_agent "${win:-$session}" "$parent"
