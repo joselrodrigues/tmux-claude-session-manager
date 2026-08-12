@@ -322,7 +322,20 @@ kill)
   if [ -n "$wt" ] && [ -d "$wt" ]; then
     if [ -z "$(git -C "$wt" status --porcelain 2>/dev/null)" ]; then
       main="$(dirname "$(git -C "$wt" rev-parse --path-format=absolute --git-common-dir)")"
-      git -C "$main" worktree remove -- "$wt" 2>/dev/null && state=removed || state=preserved
+      if err="$(git -C "$main" worktree remove -- "$wt" 2>&1)"; then
+        state=removed
+      else
+        case "$err" in
+        # git refuses to remove ANY worktree containing submodules, even a
+        # clean one. The tree was just verified clean, so rm + prune is the
+        # same outcome by hand. Only this exact refusal — a locked worktree
+        # (or anything else) stays preserved, that's the user talking.
+        *'containing submodules'*)
+          rm -rf "$wt" && git -C "$main" worktree prune && state=removed || state=preserved
+          ;;
+        *) state=preserved ;;
+        esac
+      fi
       [ "$state" = removed ] && rm -f "$sigfile"
     else
       state=preserved

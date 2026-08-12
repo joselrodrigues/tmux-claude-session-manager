@@ -80,4 +80,21 @@ assert_ok $TMUX_CMD has-session -t '=work'
 assert_ok command kill -0 "$work_pid"
 $TMUX_CMD kill-session -t '=work' 2>/dev/null
 
+# clean worktree WITH submodules: git refuses `worktree remove` outright, so
+# kill falls back to rm -rf + prune — same outcome, and only for this exact
+# refusal (the locked case above must stay preserved)
+sub="$T_TMP/subrepo"
+mkdir -p "$sub" && git -C "$sub" init -q -b main
+git -C "$sub" -c user.email=t@t -c user.name=t commit -q --allow-empty -m init
+git -C "$repo" -c protocol.file.allow=always submodule add -q "$sub" themod 2>/dev/null
+git -C "$repo" -c user.email=t@t -c user.name=t commit -q -m 'add submodule'
+mk_agent submod1
+git -C "$T_TMP/wtbase/alpha-h/submod1" -c protocol.file.allow=always \
+  submodule update --init -q 2>/dev/null
+out="$(agent kill submod1 --json)"
+printf '%s' "$out" | jq -e '.worktree == "removed"' >/dev/null || _fail submod-json
+assert_ok test ! -d "$T_TMP/wtbase/alpha-h/submod1"
+assert_ok git -C "$repo" show-ref --verify --quiet refs/heads/submod1
+assert_fail $TMUX_CMD has-session -t '=claude-alpha-submod1'
+
 t_teardown
