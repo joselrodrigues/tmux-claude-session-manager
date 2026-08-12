@@ -82,8 +82,15 @@ if [ -z "$name" ]; then
 fi
 valid_agent_name "$name" || die "invalid agent name '$name'"
 session="${prefix}${repo}-${name}"
-tm has-session -t "=$session" 2>/dev/null &&
-  die "agent '$name' already running for $repo ($session)"
+# A restored session (tmux-resurrect/continuum) carries the name of an agent
+# that is no longer there, and the name alone would block this spawn forever.
+# Recycled only when nothing in it is alive — see agent_session_is_live.
+if tm has-session -t "=$session" 2>/dev/null; then
+  agent_session_is_live "$session" &&
+    die "agent '$name' already running for $repo ($session)"
+  tm kill-session -t "=$session" 2>/dev/null
+  [ -n "${TMUX:-}" ] && tm display-message "recycled ghost session $session"
+fi
 
 wt_base="$(expand_tilde "$(get_tmux_option @claude_worktree_dir "$HOME/.claude-worktrees")")"
 wt_dir="$wt_base/${repo}-$(session_hash "$repo_root")/$name"
