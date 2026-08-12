@@ -51,29 +51,7 @@ sel=$("$DIR/agents.sh" | fzf --ansi --delimiter='\t' --with-nth=5.. \
   ${extra_opts[@]+"${extra_opts[@]}"})
 
 [ -z "$sel" ] && exit 0
-pane=$(printf '%s' "$sel" | cut -f2)
-kind=$(printf '%s' "$sel" | cut -f4)
 
-session=$(tmux display-message -p -t "$pane" '#{session_name}' 2>/dev/null)
-
-if [ "$kind" != dedicated ]; then
-  # Focus the pane in place on the outer client — a split agent already sits in
-  # a window of someone's session, so there is nothing to link. This popup
-  # closes on its own when the script exits.
-  if [ -n "$parent" ]; then
-    tmux switch-client -c "$parent" -t "$session" 2>/dev/null
-  else
-    tmux switch-client -t "$session" 2>/dev/null
-  fi
-  tmux select-window -t "$pane" 2>/dev/null
-  tmux select-pane -t "$pane" 2>/dev/null
-  exit 0
-fi
-
-# Dedicated agent: show it as a tab in the parent client's session and focus
-# it. Addressed by window id, not session — once the window is linked into the
-# user's session, the pane's session name is ambiguous and can resolve to the
-# user's side, which would select the wrong window entirely. This popup closes
-# on its own when the script exits.
-win=$(tmux display-message -p -t "$pane" '#{window_id}' 2>/dev/null)
-open_agent "${win:-$session}" "$parent"
+# The jump itself is jump_to_agent, shared with the jump key (jump.sh) so the
+# two paths cannot drift. This popup closes on its own when the script exits.
+jump_to_agent "$(printf '%s' "$sel" | cut -f2)" "$(printf '%s' "$sel" | cut -f4)" "$parent"
