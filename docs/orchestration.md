@@ -3,7 +3,14 @@
 Every script is a plain CLI — a coordinator Claude (or you) can drive the
 whole fleet without attaching. `S=~/.tmux/plugins/tmux-claude-session-manager/scripts`.
 `spawn.sh` prints the spawned session name on stdout; the name argument is
-optional — omit it (or pass `''`) for an auto-generated `agentN`.
+optional — omit it (or pass `''`) for an auto-generated `agentN`. A task passed
+to `spawn.sh` is typed into the agent once it comes up, so the first `send` is
+only needed for the ones that follow.
+
+`--base <ref>` decides where the agent's branch is cut from; without it the
+chain is `git config claude.baseBranch`, then `origin/HEAD`, then the current
+branch. It is ignored when the agent's branch already exists — that branch is
+the work.
 
 ## The coordinator loop
 

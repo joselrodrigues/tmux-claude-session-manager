@@ -18,6 +18,8 @@ each one. This plugin gives you:
 - 👁️ **A live preview** of each agent's screen right in the picker.
 - 🎯 **Smart jump** — selecting an agent opens it as a window (tab) of your own
   session. Close the tab and the agent keeps running.
+- ⚡ **One key to whoever needs you** (`prefix` + `J`) — straight to the agent
+  waiting on you, no picker in between.
 - 🚀 **A launcher** (`prefix` + `y`) that opens/attaches a Claude session for the
   current directory.
 - ❌ **Quick kill** (`ctrl-x`) of a finished agent from the picker.
@@ -45,7 +47,8 @@ set -g @plugin 'craftzdog/tmux-claude-session-manager'
 Then hit `prefix` + <kbd>I</kbd> to install.
 
 > **Keybinding note:** by default the plugin binds `prefix` + `y` (launch),
-> `prefix` + `u` (list), `prefix` + `Y` (spawn), `prefix` + `S` (spawn into a
+> `prefix` + `u` (list), `prefix` + `J` (jump to the agent that needs you),
+> `prefix` + `Y` (spawn), `prefix` + `S` (spawn into a
 > split) and `prefix` + `b` (close an agent tab). If your config binds those
 > elsewhere, either change the options
 > below, or make sure the plugin loads **after** your own bindings (put
@@ -69,6 +72,7 @@ run-shell ~/clone/path/claude_session_manager.tmux
 | -------------- | ----------------------------------------------------------------------------- |
 | `prefix` + `y` | Launch (or re-open) a Claude session for the current directory, as a tab      |
 | `prefix` + `u` | Open the agent picker                                                         |
+| `prefix` + `J` | Jump straight to the agent that most needs you, without the picker            |
 | `prefix` + `Y` | Spawn a named agent in its own git worktree                                   |
 | `prefix` + `S` | Spawn one the same way, but as a split of this window                        |
 | `prefix` + `b` | Close the agent tab you are on, leaving the agent running                     |
@@ -101,6 +105,7 @@ Set any of these before the plugin loads (defaults shown):
 ```tmux
 set -g @claude_launch_key     'y'                    # prefix key: launch/open for current dir
 set -g @claude_list_key       'u'                    # prefix key: open the picker
+set -g @claude_jump_key       'J'                    # prefix key: jump to the agent that needs you
 set -g @claude_spawn_key      'Y'                    # prefix key: spawn named agent
 set -g @claude_split_key      'S'                    # prefix key: spawn one into a split of this window
 set -g @claude_command        'claude'               # command run in new sessions
@@ -176,6 +181,27 @@ so tmux stores a literal `$` (in a single-quoted value, use a bare
   `ctrl-x` in the picker still kills it with the usual worktree cleanup.
   Everything that identifies a tab agent — its worktree, name and task — is
   stamped on the pane instead of on a session.
+- **The task is typed in for you.** A spawn that collected a task waits — in the
+  background, so the popup closes immediately — until that agent publishes
+  itself, then sends the text. The wait is on the agent registering, never on
+  what the pane prints: the shell and node write plenty before Claude's input
+  box exists, and anything typed into that gap is lost. If the agent never
+  registers within 20s nothing is sent, and the task is still on the picker row.
+- **The base branch is asked for, not assumed.** `prefix` + `Y` / `prefix` + `S`
+  offer a list of local branches for the new worktree to be cut from, with the
+  repo's default under the cursor. That default is
+  `git config claude.baseBranch` when you set one, otherwise the branch
+  `origin/HEAD` points at, otherwise the branch you are on — the same chain
+  `spawn.sh` follows when nobody passes `--base`.
+- **The jump key** (`prefix` + `J`) takes the picker's top row — waiting first,
+  then idle oldest-first — and jumps to it directly, through the same code path
+  `enter` in the picker uses.
+- **Restored sessions do not block a name forever.** tmux-continuum brings back
+  a `claude-*` session with its name, a bare shell and no Claude in it; spawning
+  that name again recycles the empty shell instead of refusing. A session is
+  only treated as empty when nothing published itself against its pane's tty
+  _and_ the pane is not running the configured `@claude_command` — a live agent
+  is never killed to make room.
 - **Each Claude's own state file** is the source of truth for what is running
   and how it is doing. A running session writes `~/.claude/sessions/<pid>.json`
   (honouring `CLAUDE_CONFIG_DIR`) with its state — `busy` / `waiting` / `idle` —
@@ -216,7 +242,8 @@ tasks and wait for completion via CLI.
 
 | Command | Action |
 | ------- | ------ |
-| `spawn.sh [name] [repo] ["task"]` | Launch a named agent for `<repo>` with the given task; prints the session name on stdout. `name` is optional — empty auto-generates `agentN` (names cannot contain dots). Reuses worktree if name exists in that repo. `--no-popup` is accepted for CLI compatibility but is a no-op. |
+| `spawn.sh [name] [repo] ["task"]` | Launch a named agent for `<repo>` with the given task; prints the session name on stdout. `name` is optional — empty auto-generates `agentN` (names cannot contain dots). Reuses worktree if name exists in that repo. The task is typed into the agent as soon as it comes up. `--no-popup` is accepted for CLI compatibility but is a no-op. |
+| `spawn.sh [name] [repo] ["task"] --base <ref>` | The same, cutting the agent's branch from `<ref>` instead of the default. Ignored (with a warning) when the agent's branch already exists — that branch is where its work is. |
 | `spawn.sh [name] [repo] ["task"] --split <h\|v> [--target <pane>]` | The same, as a split of `<pane>`'s window (`h` side by side, `v` stacked) instead of a session; prints the new pane id on stdout. `--target` defaults to whatever tmux calls the current pane, which is why the keybinding always passes it. |
 | `agent.sh send <name\|@target> '<message>'` | Send text to an agent or group target. |
 | `agent.sh read <name> [--lines N]` | Print agent's pane output. |
