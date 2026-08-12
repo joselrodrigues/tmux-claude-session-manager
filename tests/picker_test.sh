@@ -29,43 +29,8 @@ open_as_tab() {
     open_agent "$2" "$3"' _ "$SCRIPTS" "$1" "$2"
 }
 
-# in_pane <name> <command...> — run a command in a throwaway window of the
-# scratch server, with the env the scripts need, and wait for it to finish.
-# Its output is left in $T_TMP/<name>.out.
-in_pane() {
-  local name="$1"; shift
-  $TMUX_CMD new-window -d -t '=host:' -c "$T_TMP" \
-    "env CLAUDE_CONFIG_DIR=$CLAUDE_CONFIG_DIR PATH=$TESTDIR/fixtures:\$PATH \
-     sh -c '$* >$T_TMP/$name.out 2>&1; echo done >$T_TMP/$name.flag'"
-  local i=0
-  while [ ! -f "$T_TMP/$name.flag" ] && [ "$i" -lt 60 ]; do
-    sleep 1
-    i=$((i + 1))
-  done
-  # Said out loud, because a command that never finished and a command that
-  # printed nothing produce the same empty .out file — and every assertion
-  # downstream would then blame the script under test.
-  [ -f "$T_TMP/$name.flag" ] || _fail "in_pane '$name' never finished"
-  rm -f "$T_TMP/$name.flag"
-}
-
-# The client's current window, read the way helpers.sh:91 explains you have to:
-# display-message evaluates against tmux's current session, not the client's,
-# so the session has to come from the client itself first.
-client_window() {
-  local s
-  s="$($TMUX_CMD list-clients -F '#{client_name} #{client_session}' |
-    awk -v c="$client" '$1 == c { print $2 }')"
-  [ -z "$s" ] && return 1
-  $TMUX_CMD display-message -p -t "=$s:" '#{window_id}'
-}
-client_pane() {
-  local s
-  s="$($TMUX_CMD list-clients -F '#{client_name} #{client_session}' |
-    awk -v c="$client" '$1 == c { print $2 }')"
-  [ -z "$s" ] && return 1
-  $TMUX_CMD display-message -p -t "=$s:" '#{pane_id}'
-}
+# in_pane / client_window / client_pane live in lib.sh — jump_test.sh drives the
+# same scratch-server-with-a-real-client setup.
 
 # ---------------------------------------------------------------- fixtures
 

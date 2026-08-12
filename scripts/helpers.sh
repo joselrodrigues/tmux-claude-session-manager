@@ -99,6 +99,94 @@ claude_agents_tsv() {
       | [.pid, .status, .sessionId, .cwd, ""] | @tsv' 2>/dev/null
 }
 
+# pane_agent_status <pane>
+# waiting|idle|busy for the Claude running in that pane; empty when no Claude
+# has published itself against the pane's tty — not yet, or not ever. Callers
+# read empty as "no agent here (yet)", never as an error.
+#
+# Identity is the pid -> tty -> pane join agents.sh uses: a pane holds an agent
+# because a Claude process sits on its tty, not because of what it is called.
+pane_agent_status() {
+  local tty pid st
+  [ -z "${1:-}" ] && return 0
+  tty="$(tmux display-message -p -t "$1" '#{pane_tty}' 2>/dev/null)"
+  tty="${tty#/dev/}"
+  [ -z "$tty" ] && return 0
+  while IFS=$'\t' read -r pid st; do
+    [ "$(ps -o tty= -p "$pid" 2>/dev/null | tr -d ' ')" = "$tty" ] &&
+      { printf '%s' "$st"; return 0; }
+  done <<EOF
+$(claude_agents_tsv | cut -f1,2)
+EOF
+  return 0
+}
+
+# send_task <pane> <task>
+# Type a spawn's task into the agent it was spawned for, once there is an agent
+# to receive it.
+#
+# The wait is on the agent publishing itself, never on pane output: the shell
+# and node print plenty before Claude's input box exists, and text typed into
+# that gap is dropped on the floor. Gives up after ~20s in silence — the task
+# stays stamped on the session/pane, so the picker still shows what it was for.
+send_task() {
+  local pane="$1" task="$2" deadline=$((SECONDS + 20))
+  while [ "$SECONDS" -lt "$deadline" ]; do
+    if [ -n "$(pane_agent_status "$pane")" ]; then
+      tmux send-keys -t "$pane" -l -- "$task"
+      tmux send-keys -t "$pane" Enter
+      return 0
+    fi
+    sleep 0.5
+  done
+  return 1
+}
+
+# agent_session_is_live <session>
+# True when a claude-* session still has the agent its name promises.
+# tmux-resurrect/continuum restore the session and a bare shell, never the
+# Claude that was in it, so the name alone proves nothing.
+#
+# Two independent signals, OR'd: a Claude published against the pane's tty, or
+# the pane's own process is the configured @claude_command (which covers a
+# Claude that started seconds ago and has not published itself yet). The
+# asymmetry is deliberate — a false "live" only reproduces today's refusal,
+# while a false "ghost" would kill a working agent.
+agent_session_is_live() {
+  local pane pid want
+  pane="$(tmux list-panes -t "=$1" -F '#{pane_id}' 2>/dev/null | head -1)"
+  [ -z "$pane" ] && return 1
+  [ -n "$(pane_agent_status "$pane")" ] && return 0
+  pid="$(tmux display-message -p -t "$pane" '#{pane_pid}' 2>/dev/null)"
+  [ -z "$pid" ] && return 1
+  want="$(get_tmux_option @claude_command 'claude')"
+  want="${want%% *}"
+  # A dead pid prints nothing, which is a ghost by the same rule.
+  case "$(ps -o command= -p "$pid" 2>/dev/null)" in
+  *"${want##*/}"*) return 0 ;;
+  esac
+  return 1
+}
+
+# default_base <repo-root>
+# The ref a new agent branch is cut from when nobody picks one: an explicit
+# `git config claude.baseBranch` wins, then the remote's default branch (its
+# local twin where there is one — local branches are what the selector lists),
+# then whatever the repo is on right now.
+default_base() {
+  local b
+  b="$(git -C "$1" config claude.baseBranch 2>/dev/null)"
+  [ -n "$b" ] && { printf '%s' "$b"; return; }
+  b="$(git -C "$1" symbolic-ref --short refs/remotes/origin/HEAD 2>/dev/null)"
+  if [ -n "$b" ]; then
+    git -C "$1" show-ref --verify --quiet "refs/heads/${b#origin/}" && b="${b#origin/}"
+    printf '%s' "$b"
+    return
+  fi
+  b="$(git -C "$1" branch --show-current 2>/dev/null)"
+  printf '%s' "${b:-HEAD}"
+}
+
 # valid_agent_name <name>
 # Charset for session names AND git branch names: rejects git-ref invalids
 # and anything argv/tmux-unsafe. Dots are forbidden outright (not just the
@@ -153,6 +241,31 @@ open_agent() {
   # session would not follow the selection.
   [ -n "$client" ] && tmux switch-client -c "$client" -t "=$target"
   tmux select-window -t "=$target:$win"
+}
+
+# jump_to_agent <pane> <kind> [client]
+# Put the client in front of that agent, given a picker row's pane and kind.
+#
+# A dedicated agent lives in its own claude-* session and is shown as a tab —
+# addressed by window id, not session: once the window is linked, the pane's
+# session name is ambiguous and can resolve to the user's side, selecting the
+# wrong window entirely. A split or loose agent already sits in a window of
+# somebody's session, so it is focused where it is.
+jump_to_agent() {
+  local pane="$1" kind="$2" client="${3:-}" session win
+  session="$(tmux display-message -p -t "$pane" '#{session_name}' 2>/dev/null)"
+  if [ "$kind" = dedicated ]; then
+    win="$(tmux display-message -p -t "$pane" '#{window_id}' 2>/dev/null)"
+    open_agent "${win:-$session}" "$client"
+    return
+  fi
+  if [ -n "$client" ]; then
+    tmux switch-client -c "$client" -t "$session" 2>/dev/null
+  else
+    tmux switch-client -t "$session" 2>/dev/null
+  fi
+  tmux select-window -t "$pane" 2>/dev/null
+  tmux select-pane -t "$pane" 2>/dev/null
 }
 
 # panes_with_option <option> [value]

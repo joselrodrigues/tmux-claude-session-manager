@@ -22,6 +22,13 @@ tmux bind-key "$launch_key" \
 tmux bind-key "$list_key" \
   run-shell "$CURRENT_DIR/scripts/list.sh #{q:client_name}"
 
+# Jump to whichever agent wants you most — the picker's top row, without the
+# picker. Same #{q:client_name} reason as above: the jump has to name the client
+# it moves.
+jump_key="$(get_tmux_option @claude_jump_key 'J')"
+tmux bind-key "$jump_key" \
+  run-shell "$CURRENT_DIR/scripts/jump.sh #{q:client_name}"
+
 spawn_key="$(get_tmux_option @claude_spawn_key 'Y')"
 popup_w="$(get_tmux_option @claude_popup_width '90%')"
 popup_h="$(get_tmux_option @claude_popup_height '90%')"

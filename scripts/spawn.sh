@@ -1,7 +1,10 @@
 #!/usr/bin/env bash
 # Spawn a named Claude agent: worktree + dedicated session.
-#   spawn.sh <name> [dir] [task] [--no-popup]
-#   spawn.sh <name> [dir] [task] --split h|v [--target <pane-id>]
+#   spawn.sh <name> [dir] [task] [--base <ref>] [--no-popup]
+#   spawn.sh <name> [dir] [task] [--base <ref>] --split h|v [--target <pane-id>]
+# --base is the ref the agent's branch is cut from; without it, default_base
+# resolves claude.baseBranch -> origin/HEAD -> the current branch. A task is
+# typed into the agent once it comes up.
 # Prints the session name, or with --split the new pane id.
 # TMUX_SOCKET_OVERRIDE reroutes every tmux call (tests use a scratch server).
 set -uo pipefail
@@ -25,11 +28,12 @@ die() {
   exit 1
 }
 
-name='' path='' task='' split='' target='' pos=0
+name='' path='' task='' split='' target='' base='' pos=0
 while [ $# -gt 0 ]; do
   case "$1" in
   --no-popup) : ;;
   --split) split="${2:-}"; shift ;;
+  --base) base="${2:-}"; shift ;;
   # Which pane to split. Must be passed explicitly: the binding runs the prompt
   # in a display-popup, so by the time spawn.sh runs, tmux's own idea of the
   # current pane is the popup — the same class of bug open_agent hits with
@@ -82,8 +86,15 @@ if [ -z "$name" ]; then
 fi
 valid_agent_name "$name" || die "invalid agent name '$name'"
 session="${prefix}${repo}-${name}"
-tm has-session -t "=$session" 2>/dev/null &&
-  die "agent '$name' already running for $repo ($session)"
+# A restored session (tmux-resurrect/continuum) carries the name of an agent
+# that is no longer there, and the name alone would block this spawn forever.
+# Recycled only when nothing in it is alive — see agent_session_is_live.
+if tm has-session -t "=$session" 2>/dev/null; then
+  agent_session_is_live "$session" &&
+    die "agent '$name' already running for $repo ($session)"
+  tm kill-session -t "=$session" 2>/dev/null
+  [ -n "${TMUX:-}" ] && tm display-message "recycled ghost session $session"
+fi
 
 wt_base="$(expand_tilde "$(get_tmux_option @claude_worktree_dir "$HOME/.claude-worktrees")")"
 wt_dir="$wt_base/${repo}-$(session_hash "$repo_root")/$name"
@@ -97,10 +108,14 @@ busy="$(panes_with_option @claude_worktree "$wt_dir" | head -1)"
 if [ ! -d "$wt_dir" ]; then
   mkdir -p "$(dirname "$wt_dir")"
   if git -C "$repo_root" show-ref --verify --quiet "refs/heads/$name"; then
+    # The branch is where the agent's work already is, so it is checked out as
+    # it stands: a base would rewrite history nobody asked to rewrite.
     err="$(git -C "$repo_root" worktree add "$wt_dir" "$name" 2>&1)" || die "$err"
-    [ -n "${TMUX:-}" ] && tm display-message "reusing existing branch '$name'"
+    [ -n "${TMUX:-}" ] &&
+      tm display-message "reusing existing branch '$name'${base:+ (--base $base ignored)}"
   else
-    err="$(git -C "$repo_root" worktree add -b "$name" "$wt_dir" 2>&1)" || die "$err"
+    err="$(git -C "$repo_root" worktree add -b "$name" "$wt_dir" \
+      "${base:-$(default_base "$repo_root")}" 2>&1)" || die "$err"
   fi
   # Progress stays visible (on stderr — stdout is reserved for the session
   # name): a first init clones every submodule from scratch, which can take
@@ -115,6 +130,21 @@ cmd="$(get_tmux_option @claude_command 'claude')"
 args="$(get_tmux_option @claude_args '')"
 [ -n "$args" ] && cmd="$cmd $args"
 
+# send_task_later <pane>
+# Type the task into the agent once it is listening — from a detached waiter,
+# because the agent takes seconds to come up and the spawn popup must close
+# now, not then. All fds closed (our stdout is read through a command
+# substitution, which would otherwise never see EOF) and HUP ignored (the
+# popup's pty dies with the popup, and a non-interactive shell puts background
+# jobs in its own process group).
+send_task_later() {
+  [ -z "$task" ] && return 0
+  (
+    trap '' HUP
+    send_task "$1" "$task"
+  ) </dev/null >/dev/null 2>&1 &
+}
+
 # Split mode: the agent is a plain pane in a window you already have, so it
 # lives and dies with that pane and there is no session to link anywhere. The
 # stamps go on the pane instead — pane options do not inherit, which is what
@@ -128,17 +158,20 @@ if [ -n "$split" ]; then
   tm set-option -p -t "$pane" @claude_agent_name "$name"
   [ -n "$task" ] && tm set-option -p -t "$pane" @claude_task "$task"
   tm select-pane -t "$pane" -T "$name" 2>/dev/null
+  send_task_later "$pane"
   # No name_window: the window is the user's, not the agent's.
   printf '%s\n' "$pane"
   exit 0
 fi
 
-tm new-session -d -s "$session" -c "$wt_dir" "$cmd" || die "new-session failed"
+pane="$(tm new-session -d -P -F '#{pane_id}' -s "$session" -c "$wt_dir" "$cmd")" ||
+  die "new-session failed"
 tm set-option -t "$session" @claude_worktree "$wt_dir"
 tm set-option -t "$session" @claude_agent_name "$name"
 [ -n "$task" ] && tm set-option -t "$session" @claude_task "$task"
 tm select-pane -t "$session:" -T "$name" 2>/dev/null
 name_window "$session" "$name"
+send_task_later "$pane"
 
 # Nothing is opened here: the caller decides where the agent shows up, using
 # the session name printed below (spawn-prompt.sh hands it to open_agent).
