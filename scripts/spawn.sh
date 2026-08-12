@@ -1,7 +1,10 @@
 #!/usr/bin/env bash
 # Spawn a named Claude agent: worktree + dedicated session.
-#   spawn.sh <name> [dir] [task] [--no-popup]
-#   spawn.sh <name> [dir] [task] --split h|v [--target <pane-id>]
+#   spawn.sh <name> [dir] [task] [--base <ref>] [--no-popup]
+#   spawn.sh <name> [dir] [task] [--base <ref>] --split h|v [--target <pane-id>]
+# --base is the ref the agent's branch is cut from; without it, default_base
+# resolves claude.baseBranch -> origin/HEAD -> the current branch. A task is
+# typed into the agent once it comes up.
 # Prints the session name, or with --split the new pane id.
 # TMUX_SOCKET_OVERRIDE reroutes every tmux call (tests use a scratch server).
 set -uo pipefail
@@ -25,11 +28,12 @@ die() {
   exit 1
 }
 
-name='' path='' task='' split='' target='' pos=0
+name='' path='' task='' split='' target='' base='' pos=0
 while [ $# -gt 0 ]; do
   case "$1" in
   --no-popup) : ;;
   --split) split="${2:-}"; shift ;;
+  --base) base="${2:-}"; shift ;;
   # Which pane to split. Must be passed explicitly: the binding runs the prompt
   # in a display-popup, so by the time spawn.sh runs, tmux's own idea of the
   # current pane is the popup — the same class of bug open_agent hits with
@@ -104,10 +108,14 @@ busy="$(panes_with_option @claude_worktree "$wt_dir" | head -1)"
 if [ ! -d "$wt_dir" ]; then
   mkdir -p "$(dirname "$wt_dir")"
   if git -C "$repo_root" show-ref --verify --quiet "refs/heads/$name"; then
+    # The branch is where the agent's work already is, so it is checked out as
+    # it stands: a base would rewrite history nobody asked to rewrite.
     err="$(git -C "$repo_root" worktree add "$wt_dir" "$name" 2>&1)" || die "$err"
-    [ -n "${TMUX:-}" ] && tm display-message "reusing existing branch '$name'"
+    [ -n "${TMUX:-}" ] &&
+      tm display-message "reusing existing branch '$name'${base:+ (--base $base ignored)}"
   else
-    err="$(git -C "$repo_root" worktree add -b "$name" "$wt_dir" 2>&1)" || die "$err"
+    err="$(git -C "$repo_root" worktree add -b "$name" "$wt_dir" \
+      "${base:-$(default_base "$repo_root")}" 2>&1)" || die "$err"
   fi
   # Progress stays visible (on stderr — stdout is reserved for the session
   # name): a first init clones every submodule from scratch, which can take
